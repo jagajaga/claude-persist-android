@@ -25,8 +25,9 @@ object ProcessList {
         if (p.role == "claude-session") return "Claude session"
         val words = p.command.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
         if (words.isEmpty()) return "pid ${p.pid}"
+        // A kernel thread, "[kworker/0:1]": the slash is part of its name.
+        if (words[0].startsWith("[")) return words.joinToString(" ")
         val first = words[0].substringAfterLast('/')
-        if (first.startsWith("[")) return first
         if (first in INTERPRETERS) {
             val script = words.drop(1).firstOrNull { !it.startsWith("-") } ?: return first
             return script.trimEnd('/').substringAfterLast('/').let { if (it.isEmpty()) first else it }
