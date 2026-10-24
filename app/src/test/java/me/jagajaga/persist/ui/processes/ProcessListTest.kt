@@ -24,7 +24,7 @@ class ProcessListTest {
     }
 
     @Test
-    fun `names: the script, not the interpreter`() {
+    fun `a name is the script, not the interpreter`() {
         assertEquals("vite", ProcessList.name(p(1, 0.0, 1, "node /home/me/app/node_modules/.bin/vite --port 5199")))
         assertEquals("main.js", ProcessList.name(p(1, 0.0, 1, "/usr/bin/node --max-old-space-size=4096 /x/dist/main.js")))
         assertEquals("esbuild", ProcessList.name(p(1, 0.0, 1, "/x/esbuild --service=0.21")))
