@@ -159,7 +159,11 @@ class GatewayClientTest {
         gw.stop()
     }
 
-    /** And it comes back by itself. */
+    /**
+     * And it comes back by itself. What is promised is the reconnect: a request
+     * racing the close may have gone out on the dying link, and that one fails
+     * by design (see the in-flight test) rather than risk running twice.
+     */
     @Test
     fun `it reconnects after the server drops it`() = runBlocking {
         server.enqueue(echoingUpgrade())
@@ -168,9 +172,11 @@ class GatewayClientTest {
         gw.start()
         withTimeout(10_000) { gw.request("hello") }
         serverSocket(gw).close(1011, "server dropped the link")
+        withTimeout(10_000) {
+            while (server.requestCount < 2 || gw.state.value !is ConnectionState.Online) kotlinx.coroutines.delay(20)
+        }
         val again = withTimeout(10_000) { gw.request("listSessions") }
         assertEquals("listSessions", again!!.jsonObject["echo"]!!.jsonPrimitive.content)
-        assertEquals(2, server.requestCount)
         gw.stop()
     }
 
