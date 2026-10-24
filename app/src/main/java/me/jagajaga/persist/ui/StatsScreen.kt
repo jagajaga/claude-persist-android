@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import me.jagajaga.persist.data.ServerStats
 import me.jagajaga.persist.data.Store
+import me.jagajaga.persist.ui.processes.ProcessesSection
 import java.util.Locale
 
 /** The server's CPU, memory, swap, load and disk, refreshed every two seconds while open. */
@@ -47,34 +48,42 @@ fun StatsScreen(store: Store) {
         Modifier.fillMaxSize().background(Palette.page).verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // The process list comes regardless: on an overloaded host the stats
+        // can time out while killing the culprit is exactly what is needed.
         val s = stats
         if (s == null) {
             Text(error ?: "Loading…", style = Type.small)
-            return@Column
+        } else {
+            Gauges(s, error)
         }
-        error?.let { Text("Last update failed: $it", style = Type.tiny.copy(color = Palette.warn)) }
-        val cpu = s.cpuPercent
-        Meter("CPU", cpu?.let { String.format(Locale.ROOT, "%.0f%%", it) } ?: "…", "${s.cores} cores", (cpu ?: 0.0) / 100)
-        Meter(
-            "Load",
-            s.load.joinToString("  ") { String.format(Locale.ROOT, "%.2f", it) },
-            "1, 5, 15 min",
-            if (s.cores > 0) s.load.firstOrNull()?.div(s.cores) ?: 0.0 else 0.0,
-        )
-        val usedMem = s.memory.totalBytes - s.memory.availableBytes
-        Meter("Memory", "${bytes(usedMem)} of ${bytes(s.memory.totalBytes)}", "${bytes(s.memory.availableBytes)} available", ratio(usedMem, s.memory.totalBytes))
-        if (s.swap.totalBytes > 0) {
-            val usedSwap = s.swap.totalBytes - s.swap.freeBytes
-            Meter("Swap", "${bytes(usedSwap)} of ${bytes(s.swap.totalBytes)}", "", ratio(usedSwap, s.swap.totalBytes))
-        }
-        s.disk?.let { d ->
-            val used = d.totalBytes - d.freeBytes
-            Meter("Disk", "${bytes(used)} of ${bytes(d.totalBytes)}", d.path, ratio(used, d.totalBytes))
-        }
-        Card {
-            Text("Uptime ${uptime(s.uptimeSeconds)}", style = Type.body)
-            s.processes?.let { Text("$it processes", style = Type.small) }
-        }
+        ProcessesSection(store)
+    }
+}
+
+@Composable
+private fun Gauges(s: ServerStats, error: String?) {
+    error?.let { Text("Last update failed: $it", style = Type.tiny.copy(color = Palette.warn)) }
+    val cpu = s.cpuPercent
+    Meter("CPU", cpu?.let { String.format(Locale.ROOT, "%.0f%%", it) } ?: "…", "${s.cores} cores", (cpu ?: 0.0) / 100)
+    Meter(
+        "Load",
+        s.load.joinToString("  ") { String.format(Locale.ROOT, "%.2f", it) },
+        "1, 5, 15 min",
+        if (s.cores > 0) s.load.firstOrNull()?.div(s.cores) ?: 0.0 else 0.0,
+    )
+    val usedMem = s.memory.totalBytes - s.memory.availableBytes
+    Meter("Memory", "${bytes(usedMem)} of ${bytes(s.memory.totalBytes)}", "${bytes(s.memory.availableBytes)} available", ratio(usedMem, s.memory.totalBytes))
+    if (s.swap.totalBytes > 0) {
+        val usedSwap = s.swap.totalBytes - s.swap.freeBytes
+        Meter("Swap", "${bytes(usedSwap)} of ${bytes(s.swap.totalBytes)}", "", ratio(usedSwap, s.swap.totalBytes))
+    }
+    s.disk?.let { d ->
+        val used = d.totalBytes - d.freeBytes
+        Meter("Disk", "${bytes(used)} of ${bytes(d.totalBytes)}", d.path, ratio(used, d.totalBytes))
+    }
+    Card {
+        Text("Uptime ${uptime(s.uptimeSeconds)}", style = Type.body)
+        s.processes?.let { Text("$it processes", style = Type.small) }
     }
 }
 

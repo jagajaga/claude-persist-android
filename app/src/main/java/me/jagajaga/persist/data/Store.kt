@@ -261,6 +261,42 @@ class Store(
     suspend fun stats(): ServerStats =
         json.decodeFromJsonElement(ServerStats.serializer(), gw.request("serverStats", waitForConnectionMs = 5_000)!!)
 
+    // ---------------------------------------------------------------- rescue
+    //
+    // These are for a machine on its knees, so they wait briefly and fail
+    // loudly: a stale list the screen labels with its age beats a spinner.
+    // A kill is never retried here -- the pid could be reused -- the user
+    // looks at the fresh list and decides again.
+
+    suspend fun processes(limit: Int = 40): ProcessSnapshot = json.decodeFromJsonElement(
+        ProcessSnapshot.serializer(),
+        gw.request("processes", mapOf("limit" to JsonPrimitive(limit)), timeoutMs = 10_000, waitForConnectionMs = 5_000)!!,
+    )
+
+    suspend fun killProcess(pid: Int, force: Boolean, tree: Boolean): KillResult = json.decodeFromJsonElement(
+        KillResult.serializer(),
+        gw.request(
+            "killProcess",
+            mapOf(
+                "pid" to JsonPrimitive(pid),
+                "signal" to JsonPrimitive(if (force) "SIGKILL" else "SIGTERM"),
+                "tree" to JsonPrimitive(tree),
+            ),
+            timeoutMs = 15_000,
+            waitForConnectionMs = 10_000,
+        )!!,
+    )
+
+    suspend fun reapOrphans(force: Boolean = false): ReapResult = json.decodeFromJsonElement(
+        ReapResult.serializer(),
+        gw.request(
+            "reapOrphans",
+            mapOf("signal" to JsonPrimitive(if (force) "SIGKILL" else "SIGTERM")),
+            timeoutMs = 15_000,
+            waitForConnectionMs = 10_000,
+        )!!,
+    )
+
     // ---------------------------------------------------------------- internals
 
     private fun logFor(sessionId: String): SessionLog = logs.getOrPut(sessionId) {

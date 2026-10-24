@@ -89,3 +89,51 @@ data class ServerStats(
     val processes: Int? = null,
     val sampledAt: Long = 0,
 )
+
+/** One process on the server (ProcInfo in daemon/src/processes.ts). */
+@Serializable
+data class ProcInfo(
+    val pid: Int,
+    val ppid: Int = 0,
+    val user: String = "",
+    /** Null on the server's first look: there is nothing yet to measure against. */
+    val cpuPercent: Double? = null,
+    val rssBytes: Long = 0,
+    val swapBytes: Long = 0,
+    val ageSeconds: Double = 0.0,
+    val command: String = "",
+    val cwd: String? = null,
+    /** Its working directory is gone: a dev server left behind by a deleted worktree. */
+    val orphaned: Boolean = false,
+    val descendants: Int = 0,
+    val treeRssBytes: Long = 0,
+    /** pid 1, code-server or the daemon: killing it would cut this very connection. */
+    @kotlinx.serialization.SerialName("protected") val isProtected: Boolean = false,
+    val protectedReason: String? = null,
+    val role: String? = null,
+)
+
+@Serializable
+data class ProcessSnapshot(
+    val processes: List<ProcInfo> = emptyList(),
+    val total: Int = 0,
+    /** Every orphan on the server, listed or not: what reapOrphans would free. */
+    val orphans: OrphanSummary = OrphanSummary(),
+    val sampledAt: Long = 0,
+)
+
+@Serializable
+data class OrphanSummary(val count: Int = 0, val rssBytes: Long = 0)
+
+@Serializable
+data class KillFailure(val pid: Int, val error: String)
+
+@Serializable
+data class KillResult(
+    val signalled: List<Int> = emptyList(),
+    val failed: List<KillFailure> = emptyList(),
+    val refused: String? = null,
+)
+
+@Serializable
+data class ReapResult(val reaped: List<KillResult> = emptyList(), val freedBytes: Long = 0)
