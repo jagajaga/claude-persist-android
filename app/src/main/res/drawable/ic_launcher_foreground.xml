@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The extension's icon (extension/media/ext-icon.svg), scaled into the
+     adaptive-icon safe zone: the 256-unit art becomes 58dp centred on 108dp,
+     so a circular mask (66dp) crops nothing. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="24.8" android:translateY="24.8" android:scaleX="0.228" android:scaleY="0.228">
+        <path android:fillColor="#1F3A6E" android:pathData="M78,112 a72,72 0 1,0 144,0 a72,72 0 1,0 -144,0 Z"/>
+        <path android:fillColor="#D9483B" android:pathData="M134,94 a34,34 0 1,0 68,0 a34,34 0 1,0 -68,0 Z"/>
+        <path android:fillColor="#E8B33C" android:pathData="M40,180 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0 Z"/>
+        <path android:strokeColor="#191714" android:strokeWidth="3" android:pathData="M28,180 a34,34 0 1,0 68,0 a34,34 0 1,0 -68,0 Z"/>
+        <path android:strokeColor="#191714" android:strokeWidth="7" android:strokeLineCap="round" android:pathData="M34,228 L222,52"/>
+        <path android:strokeColor="#1F3A6E" android:strokeWidth="5" android:strokeLineJoin="round" android:pathData="M46,44 L84,32 L62,72 Z"/>
+        <path android:fillColor="#191714" android:pathData="M205,212 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0 Z"/>
+    </group>
+</vector>
