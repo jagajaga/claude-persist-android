@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -168,6 +169,8 @@ class GatewayClient(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                // Dying now: nothing more may be sent on it, whatever the state says.
+                if (socket === webSocket) socket = null
                 webSocket.close(1000, null)
             }
 
@@ -176,6 +179,7 @@ class GatewayClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (socket === webSocket) socket = null
                 val code = response?.code
                 response?.close()
                 val loginExpired = code != null && (code in 300..399 || code == 401 || code == 403)
@@ -220,20 +224,29 @@ class GatewayClient(
         timeoutMs: Long = 20_000,
         waitForConnectionMs: Long = 30_000,
     ): JsonElement? {
-        withTimeoutOrNull(waitForConnectionMs) { state.first { it is ConnectionState.Online } }
-            ?: throw DisconnectedException()
-        val ws = socket ?: throw DisconnectedException()
         val id = ids.getAndIncrement()
-        val answer = CompletableDeferred<JsonElement?>()
-        pending[id] = answer
         val body = buildJsonObject {
             put("id", id)
             put("op", op)
             params.forEach { (key, value) -> put(key, value) }
-        }
-        if (!ws.send(body.toString())) {
+        }.toString()
+        val answer = CompletableDeferred<JsonElement?>()
+        val deadline = now() + waitForConnectionMs
+        // A request that was never sent is always safe to send later, so it
+        // waits through a reconnect -- including the moment where the old link
+        // is already closing but the state has not caught up. Only a request
+        // that did go out and lost its answer fails: whether it ran is unknown,
+        // and the callers that care (outbox, replay) are built to run again.
+        while (true) {
+            val remaining = deadline - now()
+            if (remaining <= 0) throw DisconnectedException()
+            withTimeoutOrNull(remaining) { state.first { it is ConnectionState.Online } }
+                ?: throw DisconnectedException()
+            val ws = socket
+            pending[id] = answer
+            if (ws != null && ws.send(body)) break
             pending.remove(id)
-            throw DisconnectedException()
+            delay(50)
         }
         return try {
             withTimeout(timeoutMs) { answer.await() }
