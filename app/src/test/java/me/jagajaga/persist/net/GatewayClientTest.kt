@@ -153,7 +153,7 @@ class GatewayClientTest {
         withTimeout(10_000) { gw.request("hello") }
         val inFlight = async { runCatching { gw.request("never", timeoutMs = 30_000) } }
         Thread.sleep(200)
-        serverSocket(gw).cancel()
+        serverSocket(gw).close(1011, "server dropped the link")
         val outcome = withTimeout(10_000) { inFlight.await() }
         assertTrue("got ${outcome.exceptionOrNull()}", outcome.exceptionOrNull() is DisconnectedException)
         gw.stop()
@@ -167,7 +167,7 @@ class GatewayClientTest {
         val gw = client()
         gw.start()
         withTimeout(10_000) { gw.request("hello") }
-        serverSocket(gw).cancel()
+        serverSocket(gw).close(1011, "server dropped the link")
         val again = withTimeout(10_000) { gw.request("listSessions") }
         assertEquals("listSessions", again!!.jsonObject["echo"]!!.jsonPrimitive.content)
         assertEquals(2, server.requestCount)
