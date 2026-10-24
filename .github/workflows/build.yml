@@ -21,7 +21,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      # The runner ships an Android SDK; it only needs its licences accepted,
+      # after which the Android Gradle plugin fetches whatever platform it lacks.
+      # (android-actions/setup-android failed here on an interactive licence prompt.)
+      - name: Accept Android SDK licences
+        run: |
+          SDKMANAGER=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)
+          echo "using $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
 
       - uses: gradle/actions/setup-gradle@v4
         with:
