@@ -68,6 +68,11 @@ class GatewayClientTest {
         server.shutdown()
     }
 
+    /** The server side of the n-th connection, or a failure that says what happened instead. */
+    private fun serverSocket(gw: GatewayClient): WebSocket =
+        serverSockets.poll(5, TimeUnit.SECONDS)
+            ?: throw AssertionError("no server-side socket after 5s; requests=${server.requestCount}, client=${gw.state.value}")
+
     private fun client(cookie: String? = "authelia_session=abc") = GatewayClient(
         scope = scope,
         wsUrl = { server.url("/proxy/7790/ws").toString().replace("http", "ws") },
@@ -130,7 +135,7 @@ class GatewayClientTest {
         val push = async { withTimeout(10_000) { gw.pushes.first() } }
         gw.start()
         withTimeout(10_000) { gw.request("hello") }
-        serverSockets.poll(5, TimeUnit.SECONDS)!!.send("""{"kind":"event","sessionId":"s1","event":{"seq":3}}""")
+        serverSocket(gw).send("""{"kind":"event","sessionId":"s1","event":{"seq":3}}""")
         assertEquals("s1", push.await()["sessionId"]!!.jsonPrimitive.content)
         gw.stop()
     }
@@ -148,7 +153,7 @@ class GatewayClientTest {
         withTimeout(10_000) { gw.request("hello") }
         val inFlight = async { runCatching { gw.request("never", timeoutMs = 30_000) } }
         Thread.sleep(200)
-        serverSockets.poll(5, TimeUnit.SECONDS)!!.cancel()
+        serverSocket(gw).cancel()
         val outcome = withTimeout(10_000) { inFlight.await() }
         assertTrue("got ${outcome.exceptionOrNull()}", outcome.exceptionOrNull() is DisconnectedException)
         gw.stop()
@@ -162,7 +167,7 @@ class GatewayClientTest {
         val gw = client()
         gw.start()
         withTimeout(10_000) { gw.request("hello") }
-        serverSockets.poll(5, TimeUnit.SECONDS)!!.cancel()
+        serverSocket(gw).cancel()
         val again = withTimeout(10_000) { gw.request("listSessions") }
         assertEquals("listSessions", again!!.jsonObject["echo"]!!.jsonPrimitive.content)
         assertEquals(2, server.requestCount)

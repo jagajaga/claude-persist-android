@@ -1,0 +1,128 @@
+package me.jagajaga.persist.ui
+
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import me.jagajaga.persist.net.ConnectionState
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * What the connection is doing, said plainly, whenever it is not simply up.
+ *
+ * On a bad network the honest answer is the useful one: "reconnecting in 4s,
+ * 2 messages queued" tells you your words are safe and when to look again;
+ * a spinner tells you nothing.
+ */
+@Composable
+fun ConnectionBanner(state: ConnectionState, queued: Int, onLogin: () -> Unit, onRetry: () -> Unit) {
+    if (state is ConnectionState.Online && queued == 0) return
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(state) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val queuedText = if (queued > 0) " · $queued queued" else ""
+    val (text, color, action) = when (state) {
+        is ConnectionState.Online -> Triple("Sending$queuedText", Palette.accentSoft, null)
+        is ConnectionState.Connecting -> Triple("Connecting…$queuedText", Palette.accentSoft, null)
+        is ConnectionState.Offline -> {
+            val secs = ((state.retryAtMs - now) / 1000).coerceAtLeast(0)
+            Triple("Offline — retrying in ${secs}s$queuedText", Color(0xFFFFF4E5), "Retry now" to onRetry)
+        }
+        is ConnectionState.NeedsLogin -> Triple("Login expired$queuedText", Palette.errorSoft, "Log in" to onLogin)
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(color)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(text, style = Type.small.copy(color = Palette.text))
+        if (action != null) {
+            Text(
+                action.first,
+                style = Type.small.copy(color = Palette.accent, fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.clickable { action.second() }.padding(start = 12.dp),
+            )
+        }
+    }
+}
+
+/** Green when idle and done, pulsing blue while working, red on error. */
+@Composable
+fun StatusDot(working: Boolean, error: Boolean = false, modifier: Modifier = Modifier) {
+    val color = when {
+        error -> Palette.error
+        working -> Palette.accent
+        else -> Palette.ok
+    }
+    val pulse = if (working) {
+        val transition = rememberInfiniteTransition(label = "pulse")
+        transition.animateFloat(0.35f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "alpha").value
+    } else {
+        1f
+    }
+    Box(
+        modifier
+            .size(9.dp)
+            .alpha(pulse)
+            .background(color, CircleShape),
+    )
+}
+
+private val clockFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+private val dayFormat = SimpleDateFormat("d MMM", Locale.getDefault())
+
+fun clock(ms: Long): String = clockFormat.format(Date(ms))
+
+/** "now", "5m", "3h", "yesterday", "12 Oct" -- for lists, where space is short. */
+fun ago(ms: Long, now: Long = System.currentTimeMillis()): String {
+    if (ms <= 0) return ""
+    val minutes = (now - ms) / 60_000
+    return when {
+        minutes < 1 -> "now"
+        minutes < 60 -> "${minutes}m"
+        minutes < 24 * 60 -> "${minutes / 60}h"
+        minutes < 48 * 60 -> "yesterday"
+        else -> dayFormat.format(Date(ms))
+    }
+}
+
+fun bytes(n: Long): String = when {
+    n >= 1L shl 40 -> String.format(Locale.ROOT, "%.1f TB", n / (1L shl 40).toDouble())
+    n >= 1L shl 30 -> String.format(Locale.ROOT, "%.1f GB", n / (1L shl 30).toDouble())
+    n >= 1L shl 20 -> String.format(Locale.ROOT, "%.1f MB", n / (1L shl 20).toDouble())
+    n >= 1L shl 10 -> String.format(Locale.ROOT, "%.0f KB", n / (1L shl 10).toDouble())
+    else -> "$n B"
+}

@@ -76,3 +76,13 @@ dependencies {
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
+
+// A failing test on CI must say why, in the log, not only in a report file.
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events("failed", "skipped")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStackTraces = true
+        showCauses = true
+    }
+}

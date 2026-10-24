@@ -37,6 +37,13 @@ jobs:
       - name: Unit tests
         run: gradle --no-daemon testDebugUnitTest
 
+      - name: Keep the test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: app/build/reports/tests/
+
       - name: Restore signing key
         if: github.event_name != 'pull_request'
         env:
