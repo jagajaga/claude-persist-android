@@ -154,10 +154,12 @@ class GatewayClientTest {
         val inFlight = async { runCatching { gw.request("never", timeoutMs = 30_000) } }
         // Drop the link only once the request is truly in flight: one not yet
         // sent is retried after the reconnect by design, which is another test.
+        // Waited with delay, not Thread.sleep: runBlocking runs the request on
+        // this same thread, and a sleeping thread never lets it start.
         val deadline = System.currentTimeMillis() + 5_000
         while (received.none { it.contains("\"never\"") }) {
             if (System.currentTimeMillis() > deadline) throw AssertionError("the request never reached the server")
-            Thread.sleep(10)
+            kotlinx.coroutines.delay(10)
         }
         serverSocket(gw).close(1011, "server dropped the link")
         val outcome = withTimeout(10_000) { inFlight.await() }
