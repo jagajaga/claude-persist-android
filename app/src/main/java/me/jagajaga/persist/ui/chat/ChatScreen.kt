@@ -32,7 +32,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.content.MediaType
+import androidx.compose.foundation.content.ReceiveContentListener
+import androidx.compose.foundation.content.consume
+import androidx.compose.foundation.content.contentReceiver
+import androidx.compose.foundation.content.hasMediaType
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -69,7 +76,10 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withLink
+import me.jagajaga.persist.ui.viewer.FileKind
 import me.jagajaga.persist.ui.viewer.Links
+import me.jagajaga.persist.ui.viewer.LocalImage
+import me.jagajaga.persist.ui.viewer.ServerImage
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -302,10 +312,13 @@ private fun UserBubble(item: ThreadItem.User) {
         ) {
             if (item.text.isNotBlank()) Text(item.text, style = Type.body)
             if (item.images.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val uri = LocalUriHandler.current
-                    item.images.forEachIndexed { i, name ->
-                        val path = item.paths.getOrNull(i)
+                // Pictures as pictures; anything else (or a picture with no copy on the server) as a chip.
+                val uri = LocalUriHandler.current
+                item.images.forEachIndexed { i, name ->
+                    val path = item.paths.getOrNull(i)
+                    if (path != null && Links.kind(path) == FileKind.Image) {
+                        ServerImage(path)
+                    } else {
                         Chip("▣ $name", onClick = path?.let { p -> { uri.openUri(p) } })
                     }
                 }
@@ -371,6 +384,11 @@ private fun ToolCard(item: ThreadItem.Tool) {
             item.agent?.let { AgentChip(it) }
             Text(item.name, style = Type.body.copy(fontWeight = FontWeight.SemiBold))
             Text(item.label, style = Type.code.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        }
+        // Claude looking at a picture: show the picture.
+        if (item.name == "Read" && item.label.startsWith("/") && Links.kind(item.label) == FileKind.Image) {
+            Spacer(Modifier.size(8.dp))
+            ServerImage(item.label, maxHeight = 200.dp)
         }
         if (open) {
             if (item.name in FILE_TOOLS && item.label.startsWith("/")) {
@@ -502,6 +520,7 @@ private fun WorkingRow(onStop: () -> Unit) {
 }
 
 /** The panel's composer: a rounded box with + and the model pill, and the blue send button. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun Composer(
     session: SessionInfo?,
@@ -510,7 +529,8 @@ private fun Composer(
     onOptions: () -> Unit,
     onSend: (String, List<OutgoingImage>, List<OutgoingFile>) -> Unit,
 ) {
-    var text by remember { mutableStateOf("") }
+    val textState = rememberTextFieldState()
+    val text = textState.text.toString()
     val images = remember { mutableStateListOf<OutgoingImage>() }
     val files = remember { mutableStateListOf<OutgoingFile>() }
     var attachMenu by remember { mutableStateOf(false) }
@@ -556,7 +576,7 @@ private fun Composer(
                         Modifier.background(Palette.codeBg, RoundedCornerShape(50)).padding(start = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("▣ ${image.name}", style = Type.tiny.copy(color = Palette.text), maxLines = 1)
+                        LocalImage(image.base64, 36.dp)
                         // A real target for a finger, not the glyph.
                         Box(Modifier.size(32.dp).clickable { images.remove(image) }, contentAlignment = Alignment.Center) {
                             Text("×", style = Type.body)
@@ -568,11 +588,24 @@ private fun Composer(
         Box(Modifier.fillMaxWidth().heightIn(min = 28.dp, max = 220.dp)) {
             if (text.isEmpty()) Text("Message Claude…", style = Type.body.copy(color = Palette.faint))
             BasicTextField(
-                value = text,
-                onValueChange = { text = it },
+                state = textState,
                 textStyle = Type.body,
                 cursorBrush = SolidColor(Palette.accent),
-                modifier = Modifier.fillMaxWidth(),
+                // Images from the keyboard (Gboard's clipboard, stickers) and from a
+                // paste: without a receiver the keyboard says the app can't take them.
+                modifier = Modifier.fillMaxWidth().contentReceiver(
+                    ReceiveContentListener { content ->
+                        if (!content.hasMediaType(MediaType.Image)) return@ReceiveContentListener content
+                        content.consume { item ->
+                            val uri = item.uri ?: return@consume false
+                            scope.launch {
+                                withContext(Dispatchers.IO) { encodeImage(context, uri) }?.let { images += it }
+                                    ?: run { attachError = "Couldn't read that image" }
+                            }
+                            true
+                        }
+                    },
+                ),
             )
         }
         Spacer(Modifier.size(8.dp))
@@ -616,7 +649,7 @@ private fun Composer(
                     .background(if (canSend) Palette.accent else Palette.border, CircleShape)
                     .clickable(enabled = canSend) {
                         onSend(text.trim(), images.toList(), files.toList())
-                        text = ""
+                        textState.clearText()
                         images.clear()
                         files.clear()
                     },
@@ -664,7 +697,11 @@ private fun encodeImage(context: android.content.Context, uri: Uri): OutgoingIma
     val resolver = context.contentResolver
     val raw = resolver.openInputStream(uri)!!.use { it.readBytes() }
     val type = resolver.getType(uri) ?: "image/jpeg"
-    val name = uri.lastPathSegment?.substringAfterLast('/')?.take(40) ?: "image"
+    val name = runCatching {
+        resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')?.take(40) ?: "image"
     val bytes: ByteArray
     val mediaType: String
     if (raw.size <= 1_500_000 && type in setOf("image/jpeg", "image/png", "image/webp", "image/gif")) {
