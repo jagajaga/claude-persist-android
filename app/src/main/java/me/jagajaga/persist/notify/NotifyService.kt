@@ -113,6 +113,9 @@ object Notifications {
         if (AppVisibility.visible && c.store.isOpen(sessionId)) return
         val title = c.store.sessions.value.firstOrNull { it.id == sessionId }?.title ?: ""
         val notice = NotifyRules.notice(title, event) ?: return
+        // Each kind has its own switch in Settings.
+        val wanted = if (notice.channel == NotifyRules.ATTENTION) c.settings.notifyNeedsMe else c.settings.notifyDone
+        if (!wanted) return
         if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
         channels(context)
         val n: Notification = NotificationCompat.Builder(context, notice.channel)

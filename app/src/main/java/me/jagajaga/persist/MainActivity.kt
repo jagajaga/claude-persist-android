@@ -421,33 +421,53 @@ private fun UpdateSection(c: Container) {
     }
 }
 
-/** "Notify me": Claude waiting on you, and turns finishing, while the app is closed. */
+/**
+ * Two switches: when a chat needs you (a permission like "Allow Bash?", or a
+ * question), and when a turn finishes. Either keeps a background connection
+ * so they arrive with the app closed.
+ */
 @Composable
 private fun NotifySection(c: Container) {
     val context = LocalContext.current
-    var on by remember { mutableStateOf(c.settings.notify) }
-    fun apply(enable: Boolean) {
-        on = enable
-        c.settings.notify = enable
-        if (enable) me.jagajaga.persist.notify.NotifyService.start(context) else me.jagajaga.persist.notify.NotifyService.stop(context)
+    var needsMe by remember { mutableStateOf(c.settings.notifyNeedsMe) }
+    var done by remember { mutableStateOf(c.settings.notifyDone) }
+    fun apply() {
+        c.settings.notifyNeedsMe = needsMe
+        c.settings.notifyDone = done
+        if (c.settings.notify) me.jagajaga.persist.notify.NotifyService.start(context) else me.jagajaga.persist.notify.NotifyService.stop(context)
     }
+    // Asked for once, the first time either switch goes on.
+    var pendingSwitch by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
     val ask = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { granted -> apply(granted) }
+    ) { granted -> pendingSwitch?.invoke(granted); pendingSwitch = null; apply() }
+    fun switch(want: Boolean, set: (Boolean) -> Unit) {
+        val needPermission = want && android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (needPermission) {
+            pendingSwitch = set
+            ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            set(want)
+            apply()
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Notifications", style = Type.small.copy(fontWeight = FontWeight.SemiBold))
+        NotifyRow("When Claude needs me", "A permission to allow (\"Allow Bash?\") or a question to answer", needsMe) { want -> switch(want) { needsMe = it } }
+        NotifyRow("When a turn finishes", "With the first line of what Claude did", done) { want -> switch(want) { done = it } }
+        if (needsMe || done) Text("Keeps a connection open while the app is closed; Android shows a small notification for that.", style = Type.tiny)
+    }
+}
+
+@Composable
+private fun NotifyRow(title: String, detail: String, on: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text("Notify me", style = Type.body)
-            Text("When Claude needs you or finishes, even with the app closed", style = Type.tiny)
+            Text(title, style = Type.body)
+            Text(detail, style = Type.tiny)
         }
-        androidx.compose.material3.Switch(checked = on, onCheckedChange = { want ->
-            if (want && android.os.Build.VERSION.SDK_INT >= 33 &&
-                androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) {
-                ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-            } else {
-                apply(want)
-            }
-        })
+        androidx.compose.material3.Switch(checked = on, onCheckedChange = onChange)
     }
 }
 

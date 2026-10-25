@@ -29,10 +29,18 @@ class Settings(context: Context) {
     val wsUrl: String
         get() = baseUrl.replaceFirst(Regex("^http"), "ws") + "/proxy/$gatewayPort/ws"
 
-    /** Follow the chats in the background and notify (see NotifyService). */
-    var notify: Boolean
-        get() = prefs.getBoolean("notify", false)
-        set(value) = prefs.edit().putBoolean("notify", value).apply()
+    /** Notify when a chat needs you: a permission to allow, a question to answer. */
+    var notifyNeedsMe: Boolean
+        get() = prefs.getBoolean("notifyNeedsMe", prefs.getBoolean("notify", false))
+        set(value) = prefs.edit().putBoolean("notifyNeedsMe", value).apply()
+
+    /** Notify when a turn finishes. */
+    var notifyDone: Boolean
+        get() = prefs.getBoolean("notifyDone", prefs.getBoolean("notify", false))
+        set(value) = prefs.edit().putBoolean("notifyDone", value).apply()
+
+    /** The background connection runs while either kind of notification is on (see NotifyService). */
+    val notify: Boolean get() = notifyNeedsMe || notifyDone
 
     /** The gateway over plain HTTP, through the same proxy and login. */
     val httpBase: String get() = "$baseUrl/proxy/$gatewayPort"
