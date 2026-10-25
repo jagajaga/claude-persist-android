@@ -107,9 +107,31 @@ object Notifications {
         )
     }
 
+    private val pending = PendingRequests()
+
+    private fun idFor(sessionId: String, channel: String) = (sessionId + channel).hashCode()
+
+    /** A chat was opened: whatever it notified about has been seen. */
+    fun clearChat(context: Context, sessionId: String) {
+        pending.forget(sessionId)
+        val nm = NotificationManagerCompat.from(context)
+        nm.cancel(idFor(sessionId, NotifyRules.ATTENTION))
+        nm.cancel(idFor(sessionId, NotifyRules.DONE))
+    }
+
     /** Post it, unless you are looking at that very chat right now. */
     fun maybePost(context: Context, sessionId: String, event: kotlinx.serialization.json.JsonObject) {
         val c = context.container
+        // Track what is waiting, so an answer -- here, in the editor, anywhere --
+        // takes the "needs you" notification down once nothing in the chat waits.
+        val inner = event["event"] as? kotlinx.serialization.json.JsonObject
+        val type = (inner?.get("type") as? kotlinx.serialization.json.JsonPrimitive)?.content
+        val requestId = (inner?.get("requestId") as? kotlinx.serialization.json.JsonPrimitive)?.content
+        if (requestId != null && (type == "permission_request" || type == "question_request")) pending.asked(sessionId, requestId)
+        if (requestId != null && type == "permission_resolved") {
+            if (pending.answered(sessionId, requestId)) NotificationManagerCompat.from(context).cancel(idFor(sessionId, NotifyRules.ATTENTION))
+            return
+        }
         if (AppVisibility.visible && c.store.isOpen(sessionId)) return
         val title = c.store.sessions.value.firstOrNull { it.id == sessionId }?.title ?: ""
         val notice = NotifyRules.notice(title, event) ?: return
@@ -129,7 +151,7 @@ object Notifications {
             .setContentIntent(openApp(context, sessionId))
             .build()
         // One per chat and kind: a newer one replaces the last rather than piling up.
-        val id = (sessionId + notice.channel).hashCode()
+        val id = idFor(sessionId, notice.channel)
         runCatching { NotificationManagerCompat.from(context).notify(id, n) }
     }
 }

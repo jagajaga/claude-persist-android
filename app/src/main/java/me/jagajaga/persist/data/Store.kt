@@ -583,7 +583,7 @@ class Store(
         private const val SAVE_DEBOUNCE_MS = 400L
         val FEED_TYPES = setOf(
             "user_message", "assistant_text", "tool_use", "tool_result",
-            "permission_request", "question_request", "result",
+            "permission_request", "question_request", "permission_resolved", "result",
         )
 
         fun typeOf(stored: JsonObject): String? =

@@ -185,6 +185,9 @@ fun ChatFrame(
 /** One chat's conversation: the part a sideways swipe moves. */
 @Composable
 fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
+    // Opened: its notifications have done their job.
+    val appContext = LocalContext.current.applicationContext
+    LaunchedEffect(sessionId) { me.jagajaga.persist.notify.Notifications.clearChat(appContext, sessionId) }
     DisposableEffect(sessionId) {
         store.openChat(sessionId)
         onDispose { store.closeChat(sessionId) }
