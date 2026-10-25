@@ -154,6 +154,15 @@ class Store(
 
     // ---------------------------------------------------------------- chats
 
+    private val _tabs = MutableStateFlow(readCached("tabs.json", ListSerializer(String.serializer())) ?: emptyList())
+    /** The chats you have open as tabs, in the order you opened them. */
+    val tabs: StateFlow<List<String>> = _tabs
+
+    fun setTabs(ids: List<String>) {
+        _tabs.value = ids
+        save("tabs.json", ListSerializer(String.serializer()), ids)
+    }
+
     fun markViewed(sessionId: String) {
         _viewed.value = _viewed.value + (sessionId to System.currentTimeMillis())
         save("viewed.json", viewedSerializer, _viewed.value)

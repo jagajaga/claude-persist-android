@@ -46,6 +46,7 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Stop
@@ -122,6 +123,7 @@ fun ChatFrame(
     /** The chats along the top, in swipe order; this one among them. */
     strip: List<SessionInfo>,
     onSelect: (String) -> Unit,
+    onCloseTab: (String) -> Unit,
     banner: @Composable () -> Unit,
     thread: @Composable ColumnScope.() -> Unit,
 ) {
@@ -137,10 +139,8 @@ fun ChatFrame(
             .navigationBarsPadding()
             .imePadding(),
     ) {
-        TopBar(session, onBack, onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } })
-        // Live status for each chip, order fixed by the pager so a swipe lands where it looks like it will.
-        val live = remember(sessions) { sessions.associateBy { it.id } }
-        if (strip.size > 1) ChatStrip(strip.map { live[it.id] ?: it }, sessionId, onSelect)
+        TopBar(session, onBack, onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } }, onClose = { onCloseTab(sessionId) })
+        if (strip.isNotEmpty()) ChatStrip(strip, sessionId, onSelect, onCloseTab)
         banner()
         thread()
         val models by store.models.collectAsState()
@@ -341,9 +341,9 @@ private fun EarlierRow(loading: Boolean, error: String?, onLoad: () -> Unit) {
     }
 }
 
-/** Working chats, then recent ones: tap one, or swipe the chat sideways to step through them. */
+/** Your open chats as tabs: tap one, or swipe the chat sideways; ✕ closes it. */
 @Composable
-private fun ChatStrip(strip: List<SessionInfo>, current: String, onSelect: (String) -> Unit) {
+private fun ChatStrip(strip: List<SessionInfo>, current: String, onSelect: (String) -> Unit, onClose: (String) -> Unit) {
     val state = rememberLazyListState()
     val index = strip.indexOfFirst { it.id == current }
     LaunchedEffect(index) { if (index >= 0) state.animateScrollToItem((index - 1).coerceAtLeast(0)) }
@@ -360,19 +360,23 @@ private fun ChatStrip(strip: List<SessionInfo>, current: String, onSelect: (Stri
                     .background(if (on) Palette.accentSoft else Palette.surface, RoundedCornerShape(50))
                     .border(1.dp, if (on) Palette.accent else Palette.border, RoundedCornerShape(50))
                     .clickable(enabled = !on) { onSelect(s.id) }
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                    .padding(start = 10.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 StatusDot(working = s.working, error = s.status == "error")
                 Spacer(Modifier.width(6.dp))
-                Text(s.title, style = Type.tiny.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+                Text(s.title, style = Type.tiny.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 170.dp))
+                // A finger-sized target, not just the glyph.
+                Box(Modifier.size(26.dp).clickable { onClose(s.id) }, contentAlignment = Alignment.Center) {
+                    Text("✕", style = Type.tiny.copy(color = Palette.muted))
+                }
             }
         }
     }
 }
 
 @Composable
-private fun TopBar(session: SessionInfo?, onBack: () -> Unit, onStop: () -> Unit) {
+private fun TopBar(session: SessionInfo?, onBack: () -> Unit, onStop: () -> Unit, onClose: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().background(Palette.surface).padding(end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -385,6 +389,8 @@ private fun TopBar(session: SessionInfo?, onBack: () -> Unit, onStop: () -> Unit
         if (session?.working == true) {
             IconButton(onClick = onStop) { Icon(Icons.Filled.Stop, contentDescription = "Stop", tint = Palette.error) }
         }
+        // Close this tab: the chat goes on running on the server, it just leaves your tabs.
+        IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close tab") }
     }
 }
 
