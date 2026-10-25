@@ -174,3 +174,7 @@ data class LoginStarted(val loginId: String, val url: String)
 
 @Serializable
 data class LoginResult(val ok: Boolean, val error: String? = null, val configDir: String? = null)
+
+/** The app's newest release, as the server sees it. */
+@Serializable
+data class AppRelease(val tag: String, val version: String, val name: String, val size: Long, val path: String? = null)

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What FileProvider may hand to other apps: files fetched for viewing, and app updates. -->
+<paths>
+    <cache-path name="viewer" path="viewer/" />
+    <cache-path name="updates" path="updates/" />
+</paths>

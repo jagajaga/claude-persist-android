@@ -33,7 +33,18 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
+import me.jagajaga.persist.ui.viewer.AppUriHandler
+import me.jagajaga.persist.ui.viewer.BrowserScreen
+import me.jagajaga.persist.ui.viewer.UpdateCheck
+import me.jagajaga.persist.ui.viewer.ViewerScreen
+import me.jagajaga.persist.ui.viewer.openExternally
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -108,8 +119,23 @@ private fun App(c: Container) {
         )
     }
 
+    val context = LocalContext.current
+    val uriHandler = remember(nav) {
+        AppUriHandler(
+            context,
+            openWeb = { url -> nav.navigate("web?url=" + Uri.encode(url)) },
+            openFile = { path -> nav.navigate("view?path=" + Uri.encode(path)) },
+        )
+    }
+    CompositionLocalProvider(LocalUriHandler provides uriHandler) {
     Box(Modifier.fillMaxSize().background(Palette.page).statusBarsPadding()) {
         NavHost(nav, startDestination = "main") {
+            composable("view?path={path}", arguments = listOf(navArgument("path") { type = NavType.StringType })) { entry ->
+                ViewerScreen(c, entry.arguments?.getString("path") ?: "/") { nav.popBackStack() }
+            }
+            composable("web?url={url}", arguments = listOf(navArgument("url") { type = NavType.StringType })) { entry ->
+                BrowserScreen(entry.arguments?.getString("url") ?: "about:blank") { nav.popBackStack() }
+            }
             composable("main") { MainTabs(c, nav, banner) }
             composable("chat/{id}") { entry ->
                 val id = entry.arguments?.getString("id") ?: return@composable
@@ -131,6 +157,7 @@ private fun App(c: Container) {
             }
             composable("settings") { SettingsScreen(c, nav) }
         }
+    }
     }
 }
 
@@ -256,10 +283,81 @@ private fun SettingsScreen(c: Container, nav: NavHostController) {
             colors = ButtonDefaults.buttonColors(containerColor = Palette.accent),
         ) { Text("Save") }
         OutlinedButton(onClick = { nav.navigate("login") }) { Text("Log in again") }
+        UpdateSection(c)
         OutlinedButton(onClick = {
             CookieManager.getInstance().removeAllCookies(null)
             CookieManager.getInstance().flush()
             c.gateway.reconnectNow()
         }) { Text("Log out") }
+    }
+}
+
+/**
+ * "Check for updates": the server fetches the newest release (the repo is
+ * private, the server can read it), the phone downloads it through the
+ * gateway -- resuming if the link drops -- and Android's installer takes over.
+ */
+@Composable
+private fun UpdateSection(c: Container) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val installed = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+    }
+    var status by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var newer by remember { mutableStateOf<me.jagajaga.persist.data.AppRelease?>(null) }
+
+    fun install(release: me.jagajaga.persist.data.AppRelease) {
+        busy = true
+        scope.launch {
+            runCatching {
+                status = "Fetching ${release.version} on the server…"
+                val ready = c.store.appRelease(download = true)
+                val path = ready.path ?: error("the server couldn't fetch it")
+                val target = java.io.File(context.cacheDir, "updates/${ready.name}")
+                c.downloads.download(c.settings.fileUrl(path), target) { done, total ->
+                    status = "Downloading… ${me.jagajaga.persist.ui.bytes(done)} of ${me.jagajaga.persist.ui.bytes(if (total > 0) total else ready.size)}"
+                }
+                if (!context.packageManager.canRequestPackageInstalls()) {
+                    status = "Allow this app to install updates, then tap Install again."
+                    context.startActivity(
+                        android.content.Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                } else {
+                    status = null
+                    openExternally(context, target, "application/vnd.android.package-archive")
+                }
+            }.onFailure { status = "Update failed: ${it.message}" }
+            busy = false
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("App version $installed", style = Type.small)
+        val n = newer
+        if (n != null) {
+            Button(
+                enabled = !busy,
+                onClick = { install(n) },
+                colors = ButtonDefaults.buttonColors(containerColor = Palette.accent),
+            ) { Text("Install ${n.version}") }
+        } else {
+            OutlinedButton(enabled = !busy, onClick = {
+                busy = true
+                status = "Checking…"
+                scope.launch {
+                    runCatching { c.store.appRelease(download = false) }
+                        .onSuccess { r ->
+                            if (UpdateCheck.isNewer(r.version, installed)) { newer = r; status = "${r.version} is available" }
+                            else status = "You have the newest version (${r.version})"
+                        }
+                        .onFailure { status = "Couldn't check: ${it.message}" }
+                    busy = false
+                }
+            }) { Text("Check for updates") }
+        }
+        status?.let { Text(it, style = Type.small) }
     }
 }

@@ -29,6 +29,12 @@ class Settings(context: Context) {
     val wsUrl: String
         get() = baseUrl.replaceFirst(Regex("^http"), "ws") + "/proxy/$gatewayPort/ws"
 
+    /** The gateway over plain HTTP, through the same proxy and login. */
+    val httpBase: String get() = "$baseUrl/proxy/$gatewayPort"
+
+    /** A server file, for viewing, playing or downloading. */
+    fun fileUrl(path: String): String = "$httpBase/file?path=" + java.net.URLEncoder.encode(path, "UTF-8")
+
     companion object {
         const val DEFAULT_BASE_URL = "https://code.example.com"
         const val DEFAULT_PORT = 7790
@@ -48,6 +54,8 @@ class Container(context: Context) {
     )
 
     val store = Store(gateway, File(context.filesDir, "persist"), scope)
+
+    val downloads = me.jagajaga.persist.net.Downloads(cookie = { CookieManager.getInstance().getCookie(settings.baseUrl) })
 
     init {
         watchNetwork(context)

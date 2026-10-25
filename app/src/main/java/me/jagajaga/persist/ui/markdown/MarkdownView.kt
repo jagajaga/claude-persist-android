@@ -33,23 +33,30 @@ import androidx.compose.ui.unit.sp
 import me.jagajaga.persist.ui.Mono
 import me.jagajaga.persist.ui.Palette
 import me.jagajaga.persist.ui.Type
+import me.jagajaga.persist.ui.viewer.Links
+
+private val linkStyle = TextLinkStyles(SpanStyle(color = Palette.accent, textDecoration = TextDecoration.Underline))
 
 fun annotate(inlines: List<Inline>): AnnotatedString = buildAnnotatedString { appendInlines(inlines) }
 
 private fun AnnotatedString.Builder.appendInlines(inlines: List<Inline>) {
     for (node in inlines) when (node) {
-        is Inline.Text -> append(node.text)
+        // Paths and URLs written as plain text are tappable too.
+        is Inline.Text -> for ((piece, link) in Links.segments(node.text)) {
+            if (link == null) append(piece) else withLink(LinkAnnotation.Url(link, linkStyle)) { append(piece) }
+        }
         is Inline.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { appendInlines(node.children) }
         is Inline.Italic -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { appendInlines(node.children) }
-        is Inline.Code -> withStyle(SpanStyle(fontFamily = Mono, background = Palette.codeBg, fontSize = 13.5.sp)) {
-            append(node.text)
+        is Inline.Code -> {
+            val code = SpanStyle(fontFamily = Mono, background = Palette.codeBg, fontSize = 13.5.sp)
+            val link = Links.wholeLink(node.text)
+            if (link == null) {
+                withStyle(code) { append(node.text) }
+            } else {
+                withLink(LinkAnnotation.Url(link, TextLinkStyles(code.copy(color = Palette.accent)))) { append(node.text) }
+            }
         }
-        is Inline.Link -> withLink(
-            LinkAnnotation.Url(
-                node.url,
-                TextLinkStyles(SpanStyle(color = Palette.accent, textDecoration = TextDecoration.Underline)),
-            ),
-        ) { appendInlines(node.children) }
+        is Inline.Link -> withLink(LinkAnnotation.Url(node.url, linkStyle)) { appendInlines(node.children) }
     }
 }
 

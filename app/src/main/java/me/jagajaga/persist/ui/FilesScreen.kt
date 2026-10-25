@@ -1,5 +1,7 @@
 package me.jagajaga.persist.ui
 
+import me.jagajaga.persist.container
+
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.foundation.Image
@@ -67,7 +69,8 @@ fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)?
 
     val file = viewing
     if (file != null) {
-        FileViewer(store, path.trimEnd('/') + "/" + file.name) { viewing = null }
+        // Images, video, PDFs and the rest open in the same viewer as a link in a chat.
+        me.jagajaga.persist.ui.viewer.ViewerScreen(androidx.compose.ui.platform.LocalContext.current.container, path.trimEnd('/') + "/" + file.name) { viewing = null }
         return
     }
 
@@ -122,7 +125,7 @@ fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)?
 private val imageExtensions = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
 
 @Composable
-private fun FileViewer(store: Store, filePath: String, onClose: () -> Unit) {
+fun TextFileViewer(store: Store, filePath: String, onClose: () -> Unit) {
     var pages by remember(filePath) { mutableStateOf(listOf<FsRead>()) }
     var error by remember(filePath) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()

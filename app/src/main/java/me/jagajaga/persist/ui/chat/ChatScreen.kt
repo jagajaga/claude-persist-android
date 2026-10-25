@@ -63,6 +63,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
+import me.jagajaga.persist.ui.viewer.Links
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -296,7 +303,11 @@ private fun UserBubble(item: ThreadItem.User) {
             if (item.text.isNotBlank()) Text(item.text, style = Type.body)
             if (item.images.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    item.images.forEach { Chip("▣ $it") }
+                    val uri = LocalUriHandler.current
+                    item.images.forEachIndexed { i, name ->
+                        val path = item.paths.getOrNull(i)
+                        Chip("▣ $name", onClick = path?.let { p -> { uri.openUri(p) } })
+                    }
                 }
             }
         }
@@ -328,17 +339,20 @@ private fun AgentChip(name: String) {
 }
 
 @Composable
-private fun Chip(text: String) {
+private fun Chip(text: String, onClick: (() -> Unit)? = null) {
     Text(
         text,
-        style = Type.tiny.copy(color = Palette.text),
+        style = Type.tiny.copy(color = if (onClick != null) Palette.accent else Palette.text),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier
             .background(Palette.codeBg, RoundedCornerShape(50))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 9.dp, vertical = 3.dp),
     )
 }
+
+private val FILE_TOOLS = setOf("Read", "Write", "Edit", "MultiEdit", "NotebookEdit")
 
 /** Like the panel's: dot, agent, bold tool name, the command or path in mono. Tap for detail. */
 @Composable
@@ -359,6 +373,14 @@ private fun ToolCard(item: ThreadItem.Tool) {
             Text(item.label, style = Type.code.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         }
         if (open) {
+            if (item.name in FILE_TOOLS && item.label.startsWith("/")) {
+                val uri = LocalUriHandler.current
+                Text(
+                    "Open ${item.label.substringAfterLast('/')}",
+                    style = Type.small.copy(color = Palette.accent),
+                    modifier = Modifier.padding(top = 8.dp).clickable { uri.openUri(item.label) },
+                )
+            }
             Spacer(Modifier.size(8.dp))
             DetailBlock("IN", item.input)
             item.result?.let {
@@ -373,8 +395,17 @@ private fun ToolCard(item: ThreadItem.Tool) {
 private fun DetailBlock(label: String, body: String, error: Boolean = false) {
     Column {
         Text(label, style = Type.tiny.copy(fontWeight = FontWeight.SemiBold))
+        // Paths in a tool's output -- a screenshot it saved, a log it wrote -- open on tap.
+        val shown = remember(body) {
+            buildAnnotatedString {
+                for ((piece, link) in Links.segments(body.take(20_000))) {
+                    if (link == null) append(piece)
+                    else withLink(LinkAnnotation.Url(link, TextLinkStyles(SpanStyle(color = Palette.accent)))) { append(piece) }
+                }
+            }
+        }
         Text(
-            body.take(20_000),
+            shown,
             style = Type.code.copy(color = if (error) Palette.error else Palette.text),
             modifier = Modifier
                 .fillMaxWidth()

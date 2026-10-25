@@ -382,6 +382,12 @@ class Store(
         gw.request("fsRead", mapOf("path" to JsonPrimitive(path), "offset" to JsonPrimitive(offset)))!!,
     )
 
+    /** The newest app release; with [download], fetched to the server first so the phone can take it. */
+    suspend fun appRelease(download: Boolean): AppRelease = json.decodeFromJsonElement(
+        AppRelease.serializer(),
+        gw.request("appRelease", mapOf("download" to JsonPrimitive(download)), timeoutMs = 180_000, waitForConnectionMs = 10_000)!!,
+    )
+
     suspend fun stats(): ServerStats =
         json.decodeFromJsonElement(ServerStats.serializer(), gw.request("serverStats", waitForConnectionMs = 5_000)!!)
 

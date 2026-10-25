@@ -15,7 +15,14 @@ import me.jagajaga.persist.data.OutgoingMessage
 sealed interface ThreadItem {
     val key: String
 
-    data class User(override val key: String, val text: String, val images: List<String>, val sending: Boolean) : ThreadItem
+    /** [paths] parallels [images]: where each attachment is on the server, when known, so it can be opened. */
+    data class User(
+        override val key: String,
+        val text: String,
+        val images: List<String>,
+        val sending: Boolean,
+        val paths: List<String?> = emptyList(),
+    ) : ThreadItem
     data class Assistant(override val key: String, val text: String, val agent: String?) : ThreadItem
     data class Tool(
         override val key: String,
@@ -90,9 +97,10 @@ object ThreadModel {
                 "user_message" -> {
                     event.str("clientMessageId")?.let { delivered += it }
                     // A file's label is its path on the server; its name is what you picked.
-                    val images = (event["attachments"] as? JsonArray).orEmpty()
-                        .mapNotNull { (it as? JsonObject)?.str("label")?.let(::attachmentName) }
-                    items += ThreadItem.User(key, event.str("text") ?: "", images, sending = false)
+                    val attachments = (event["attachments"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+                    val images = attachments.mapNotNull { it.str("label")?.let(::attachmentName) }
+                    val paths = attachments.filter { it.str("label") != null }.map { it.str("path") }
+                    items += ThreadItem.User(key, event.str("text") ?: "", images, sending = false, paths = paths)
                 }
                 "assistant_text" -> items += ThreadItem.Assistant(key, event.str("text") ?: "", agent)
                 "tool_use" -> {
