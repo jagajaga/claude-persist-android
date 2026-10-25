@@ -52,7 +52,6 @@ class Store(
     private val logs = ConcurrentHashMap<String, SessionLog>()
     private val logFlows = ConcurrentHashMap<String, MutableStateFlow<List<JsonObject>>>()
     private val deltaFlows = ConcurrentHashMap<String, MutableStateFlow<String>>()
-    private val earlier = ConcurrentHashMap<String, Boolean>()
 
     private val outbox = Outbox(File(dir, "outbox.json"))
     private val _outgoing = MutableStateFlow(outbox.pending())
@@ -122,7 +121,28 @@ class Store(
 
     fun events(sessionId: String): StateFlow<List<JsonObject>> = flowFor(sessionId)
     fun streaming(sessionId: String): StateFlow<String> = deltaFor(sessionId)
-    fun hasEarlier(sessionId: String): Boolean = earlier[sessionId] == true
+
+    /**
+     * Scroll-back: the page before the oldest event held. Returns whether
+     * there is still more before that.
+     */
+    suspend fun loadEarlier(sessionId: String): Boolean {
+        val log = logFor(sessionId)
+        if (!log.hasEarlier) return false
+        val result = gw.request(
+            "history",
+            mapOf(
+                "sessionId" to JsonPrimitive(sessionId),
+                "beforeSeq" to JsonPrimitive(log.firstSeq),
+                "limit" to JsonPrimitive(HISTORY_PAGE),
+            ),
+            timeoutMs = 20_000,
+            waitForConnectionMs = 10_000,
+        ) ?: return log.hasEarlier
+        val page = json.decodeFromJsonElement(AttachResult.serializer(), result)
+        if (log.merge(page.events)) publish(sessionId)
+        return log.hasEarlier
+    }
 
     /** A chat came on screen: attach, and stay attached across reconnects. */
     fun openChat(sessionId: String) {
@@ -146,8 +166,7 @@ class Store(
             ),
         ) ?: return
         val attached = json.decodeFromJsonElement(AttachResult.serializer(), result)
-        if (log.events.isEmpty()) earlier[sessionId] = attached.hasEarlier
-        if (log.merge(attached.events)) publish(sessionId)
+        if (log.applyReplay(attached.events, skippedSome = attached.hasEarlier)) publish(sessionId)
         attached.info?.let { info ->
             _sessions.value = _sessions.value.map { if (it.id == info.id) info else it }
         }
@@ -245,7 +264,7 @@ class Store(
     }
 
     private suspend fun subscribeFeed() {
-        val result = gw.request("feed", mapOf("limit" to JsonPrimitive(200))) ?: return
+        val result = gw.request("feed", mapOf("limit" to JsonPrimitive(FEED_KEEP))) ?: return
         _feed.value = json.decodeFromJsonElement(ListSerializer(FeedItem.serializer()), result)
         save(FEED_FILE, ListSerializer(FeedItem.serializer()), _feed.value)
     }
@@ -311,9 +330,11 @@ class Store(
 
     private fun publish(sessionId: String) {
         val log = logFor(sessionId)
-        log.trimTo(CACHE_KEEP)
+        // Everything scrolled back through stays on screen; only the copy on
+        // disk is bounded. Reopened later, the cache starts above seq 0, and
+        // that alone says there is more to load.
         flowFor(sessionId).value = log.events
-        save(cacheName(sessionId), ListSerializer(JsonObject.serializer()), log.events)
+        save(cacheName(sessionId), ListSerializer(JsonObject.serializer()), log.newest(CACHE_KEEP))
     }
 
     private fun cacheName(sessionId: String) = "cache/$sessionId.json"
@@ -344,9 +365,13 @@ class Store(
         private const val FEED_FILE = "feed.json"
         private const val REPLAY_LIMIT = 300
         private const val CACHE_KEEP = 500
-        private const val FEED_KEEP = 300
+        private const val FEED_KEEP = 600
+        private const val HISTORY_PAGE = 200
         private const val SAVE_DEBOUNCE_MS = 400L
-        val FEED_TYPES = setOf("user_message", "assistant_text", "permission_request", "question_request", "result")
+        val FEED_TYPES = setOf(
+            "user_message", "assistant_text", "tool_use", "tool_result",
+            "permission_request", "question_request", "result",
+        )
 
         fun typeOf(stored: JsonObject): String? =
             (stored["event"] as? JsonObject)?.get("type")?.jsonPrimitive?.contentOrNull

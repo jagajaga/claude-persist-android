@@ -49,6 +49,30 @@ class SessionLog(initial: List<JsonObject> = emptyList()) {
         return changed
     }
 
+    /**
+     * Take a reconnect's replay. [skippedSome] is the daemon saying it left
+     * events out between what we asked from and what it sent: more happened
+     * while we were away than one replay carries. Joining that onto what we
+     * hold would leave a hole in the middle of the chat -- old and new stitched
+     * together, tool calls whose results fell into the gap spinning forever --
+     * so the stale part is dropped and the fresh window kept. Scrolling up
+     * pages the rest back in, contiguously.
+     */
+    fun applyReplay(incoming: List<JsonObject>, skippedSome: Boolean): Boolean {
+        if (skippedSome && bySeq.isNotEmpty() && incoming.isNotEmpty()) {
+            bySeq.clear()
+            merge(incoming)
+            return true
+        }
+        return merge(incoming)
+    }
+
+    /** Older events exist on the server: sequence numbers start at 0. */
+    val hasEarlier: Boolean get() = firstSeq > 0
+
+    /** The newest [keep], for what is written to disk. */
+    fun newest(keep: Int): List<JsonObject> = bySeq.values.toList().takeLast(keep)
+
     /** Drop all but the newest [keep]; bounds what is cached on the phone. */
     fun trimTo(keep: Int) {
         while (bySeq.size > keep) bySeq.pollFirstEntry()

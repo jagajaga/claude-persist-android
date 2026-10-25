@@ -4,7 +4,9 @@ import android.os.Bundle
 import android.webkit.CookieManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,7 +68,13 @@ import me.jagajaga.persist.ui.chat.ChatScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // Dark icons, always: the app is light whatever the phone's own theme,
+        // and the default follows the phone, so in dark mode the clock, battery
+        // and signal were drawn white on this white bar.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
+        )
         val c = container
         setContent { PersistTheme { App(c) } }
     }
@@ -105,7 +113,14 @@ private fun App(c: Container) {
             composable("main") { MainTabs(c, nav, banner) }
             composable("chat/{id}") { entry ->
                 val id = entry.arguments?.getString("id") ?: return@composable
-                ChatScreen(c.store, id, onBack = { nav.popBackStack() }, banner = banner)
+                ChatScreen(
+                    c.store,
+                    id,
+                    onBack = { nav.popBackStack() },
+                    // Switching replaces this chat rather than stacking: back still goes to the list.
+                    onSwitch = { other -> nav.navigate("chat/$other") { popUpTo("chat/{id}") { inclusive = true } } },
+                    banner = banner,
+                )
             }
             composable("new") { NewChat(c, nav) }
             composable("login") {

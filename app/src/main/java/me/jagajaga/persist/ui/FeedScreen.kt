@@ -1,89 +1,113 @@
 package me.jagajaga.persist.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.longOrNull
+import kotlinx.coroutines.launch
 import me.jagajaga.persist.data.FeedItem
 import me.jagajaga.persist.data.Store
+import me.jagajaga.persist.ui.chat.FeedEntry
+import me.jagajaga.persist.ui.chat.FeedModel
+import me.jagajaga.persist.ui.chat.ThreadItemView
 
-/** The newest messages across every chat, live: one place to see what is happening. */
+/**
+ * Every agent's conversation as one chat: what each is saying and doing, in
+ * the order it happens, with the chat's name above each run of its messages.
+ * Drawn with the chat screen's own pieces, so a tool card or a permission
+ * reads -- and answers -- the same here as there.
+ */
 @Composable
 fun FeedScreen(store: Store, items: List<FeedItem>, onOpen: (String) -> Unit) {
     DisposableEffect(Unit) {
         store.wantFeed(true)
         onDispose { store.wantFeed(false) }
     }
+    val sessions by store.sessions.collectAsState()
+    val titles = remember(sessions) { sessions.associate { it.id to it.title } }
+    val working = remember(sessions) { sessions.filter { it.working }.map { it.id }.toSet() }
+    val entries = remember(items, titles) { FeedModel.build(items, titles) }
+    val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
+
+    // Like a chat: open on the newest, then follow while you are at the bottom.
+    var landed by remember { mutableStateOf(false) }
+    LaunchedEffect(entries.size) {
+        if (entries.isEmpty()) return@LaunchedEffect
+        val last = listState.layoutInfo.totalItemsCount - 1
+        val atBottom = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= last - 3 } ?: true
+        if (!landed || atBottom) listState.scrollToItem(entries.size + 1)
+        landed = true
+    }
+
     Box(Modifier.fillMaxSize().background(Palette.page)) {
-        if (items.isEmpty()) Text("Nothing yet", style = Type.small, modifier = Modifier.align(Alignment.Center))
+        if (entries.isEmpty()) Text("Nothing yet", style = Type.small, modifier = Modifier.align(Alignment.Center))
         LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(items, key = { "${it.sessionId}:${(it.event["seq"] as? JsonPrimitive)?.content}" }) { item ->
-                FeedCard(item) { onOpen(item.sessionId) }
+            items(entries, key = { it.key }) { entry ->
+                when (entry) {
+                    is FeedEntry.Header -> ChatHeader(entry, entry.sessionId in working) { onOpen(entry.sessionId) }
+                    is FeedEntry.Item -> ThreadItemView(
+                        entry.item,
+                        onPermission = { requestId, allow ->
+                            scope.launch { runCatching { store.answerPermission(entry.sessionId, requestId, allow) } }
+                        },
+                        onAnswers = { requestId, answers ->
+                            scope.launch { runCatching { store.answerPermission(entry.sessionId, requestId, true, answers) } }
+                        },
+                    )
+                }
             }
         }
     }
 }
 
+/** Whose messages follow: the chat's name, tap to open it. */
 @Composable
-private fun FeedCard(item: FeedItem, onClick: () -> Unit) {
-    val event = item.event["event"] as? JsonObject
-    val type = (event?.get("type") as? JsonPrimitive)?.contentOrNull
-    val ts = (item.event["ts"] as? JsonPrimitive)?.longOrNull ?: 0
-    val (who, text) = when (type) {
-        "user_message" -> "You" to ((event?.get("text") as? JsonPrimitive)?.contentOrNull ?: "")
-        "assistant_text" -> "Claude" to ((event?.get("text") as? JsonPrimitive)?.contentOrNull ?: "")
-        "permission_request" -> "Needs you" to "Allow ${(event?.get("toolName") as? JsonPrimitive)?.contentOrNull ?: "a tool"}?"
-        "question_request" -> "Needs you" to "Claude asked a question"
-        "result" -> "Done" to ((event?.get("summary") as? JsonPrimitive)?.contentOrNull ?: "Turn finished")
-        else -> "" to ""
-    }
-    val needsYou = type == "permission_request" || type == "question_request"
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .border(if (needsYou) 1.5.dp else 1.dp, if (needsYou) Palette.warn else Palette.border, RoundedCornerShape(12.dp))
-            .background(Palette.surface, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+private fun ChatHeader(entry: FeedEntry.Header, working: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(top = 8.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(item.title, style = Type.tiny.copy(color = Palette.accent, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text(ago(ts), style = Type.tiny)
-        }
+        StatusDot(working = working)
+        Spacer(Modifier.width(8.dp))
         Text(
-            buildString {
-                if (who.isNotEmpty()) append("$who: ")
-                append(text.replace('\n', ' '))
-            },
-            style = Type.body,
-            maxLines = 3,
+            entry.title.ifBlank { "Untitled chat" },
+            style = Type.small.copy(color = Palette.accent, fontWeight = FontWeight.SemiBold),
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
+        Text(clock(entry.ts), style = Type.tiny)
     }
+    HorizontalDivider(color = Palette.border)
 }

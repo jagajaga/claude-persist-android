@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -54,6 +55,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -66,16 +68,24 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import me.jagajaga.persist.data.OutgoingImage
 import me.jagajaga.persist.data.SessionInfo
+import me.jagajaga.persist.data.SessionLog
 import me.jagajaga.persist.data.Store
 import me.jagajaga.persist.ui.Palette
 import me.jagajaga.persist.ui.StatusDot
 import me.jagajaga.persist.ui.Type
 import me.jagajaga.persist.ui.clock
+import me.jagajaga.persist.ui.list.ChatOrder
 import me.jagajaga.persist.ui.markdown.MarkdownText
 import java.io.ByteArrayOutputStream
 
 @Composable
-fun ChatScreen(store: Store, sessionId: String, onBack: () -> Unit, banner: @Composable () -> Unit) {
+fun ChatScreen(
+    store: Store,
+    sessionId: String,
+    onBack: () -> Unit,
+    onSwitch: (String) -> Unit,
+    banner: @Composable () -> Unit,
+) {
     DisposableEffect(sessionId) {
         store.openChat(sessionId)
         onDispose { store.closeChat(sessionId) }
@@ -97,16 +107,46 @@ fun ChatScreen(store: Store, sessionId: String, onBack: () -> Unit, banner: @Com
             .imePadding(),
     ) {
         TopBar(session, onBack, onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } })
+        val others = remember(sessions, sessionId) { ChatOrder.active(sessions).filter { it.id != sessionId } }
+        if (others.isNotEmpty()) ActiveStrip(others, onSwitch)
         banner()
         ThreadModel.lastPrompt(items)?.let { PromptBar(it) }
 
         val listState = rememberLazyListState()
-        // Follow the conversation while you are at the bottom of it; leave you be
-        // if you have scrolled up to read.
+        val hasEarlier = (events.firstOrNull()?.let { SessionLog.seqOf(it) } ?: 0) > 0
+        var loadingEarlier by remember(sessionId) { mutableStateOf(false) }
+        var earlierError by remember(sessionId) { mutableStateOf<String?>(null) }
+        fun loadEarlier() {
+            if (loadingEarlier || !hasEarlier) return
+            loadingEarlier = true
+            earlierError = null
+            scope.launch {
+                runCatching { store.loadEarlier(sessionId) }.onFailure { earlierError = it.message ?: "failed" }
+                loadingEarlier = false
+            }
+        }
+        // A chat opens on its newest message, as soon as there is one to show.
+        var landed by remember(sessionId) { mutableStateOf(false) }
+        LaunchedEffect(sessionId, items.isNotEmpty()) {
+            if (!landed && items.isNotEmpty()) {
+                // Counted from the data, not the layout, which may not be measured yet;
+                // the list clamps an index past its end to the last item.
+                listState.scrollToItem(items.size + 3)
+                landed = true
+            }
+        }
+        // Then follow the conversation while you are at the bottom of it; leave
+        // you be if you have scrolled up to read.
         LaunchedEffect(items.size, streaming.length) {
+            if (!landed) return@LaunchedEffect
             val last = listState.layoutInfo.totalItemsCount - 1
-            val atBottom = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= last - 2 } ?: true
+            val atBottom = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= last - 3 } ?: true
             if (atBottom && last >= 0) listState.scrollToItem(last)
+        }
+        // Reaching the top pages the earlier part in; the list keeps its place.
+        LaunchedEffect(listState, hasEarlier) {
+            snapshotFlow { listState.firstVisibleItemIndex }
+                .collect { first -> if (landed && first <= 1 && hasEarlier) loadEarlier() }
         }
         LazyColumn(
             state = listState,
@@ -114,28 +154,88 @@ fun ChatScreen(store: Store, sessionId: String, onBack: () -> Unit, banner: @Com
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(items, key = { it.key }) { item ->
-                when (item) {
-                    is ThreadItem.User -> UserBubble(item)
-                    is ThreadItem.Assistant -> AssistantText(item)
-                    is ThreadItem.Tool -> ToolCard(item)
-                    is ThreadItem.Footer -> Footer(item)
-                    is ThreadItem.Permission -> PermissionCard(item) { allow ->
-                        scope.launch { runCatching { store.answerPermission(sessionId, item.requestId, allow) } }
-                    }
-                    is ThreadItem.Question -> QuestionCard(item) { answers ->
-                        scope.launch { runCatching { store.answerPermission(sessionId, item.requestId, true, answers) } }
-                    }
-                    is ThreadItem.Notice -> Text(
-                        item.text,
-                        style = Type.small.copy(color = if (item.error) Palette.error else Palette.muted),
-                    )
+            if (hasEarlier) {
+                item(key = "earlier") {
+                    EarlierRow(loading = loadingEarlier, error = earlierError, onLoad = ::loadEarlier)
                 }
+            }
+            items(items, key = { it.key }) { item ->
+                ThreadItemView(
+                    item,
+                    onPermission = { requestId, allow ->
+                        scope.launch { runCatching { store.answerPermission(sessionId, requestId, allow) } }
+                    },
+                    onAnswers = { requestId, answers ->
+                        scope.launch { runCatching { store.answerPermission(sessionId, requestId, true, answers) } }
+                    },
+                )
             }
             if (streaming.isNotBlank()) item(key = "streaming") { MarkdownText(streaming) }
             if (session?.working == true) item(key = "working") { WorkingRow(onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } }) }
         }
         Composer(session) { text, images -> store.send(sessionId, text, images) }
+    }
+}
+
+/** One item of a thread, drawn the same in a chat and in the feed. */
+@Composable
+fun ThreadItemView(
+    item: ThreadItem,
+    onPermission: (requestId: String, allow: Boolean) -> Unit,
+    onAnswers: (requestId: String, answers: Map<String, String>) -> Unit,
+) {
+    when (item) {
+        is ThreadItem.User -> UserBubble(item)
+        is ThreadItem.Assistant -> AssistantText(item)
+        is ThreadItem.Tool -> ToolCard(item)
+        is ThreadItem.Footer -> Footer(item)
+        is ThreadItem.Permission -> PermissionCard(item) { allow -> onPermission(item.requestId, allow) }
+        is ThreadItem.Question -> QuestionCard(item) { answers -> onAnswers(item.requestId, answers) }
+        is ThreadItem.Notice -> Text(
+            item.text,
+            style = Type.small.copy(color = if (item.error) Palette.error else Palette.muted),
+        )
+    }
+}
+
+@Composable
+private fun EarlierRow(loading: Boolean, error: String?, onLoad: () -> Unit) {
+    Box(Modifier.fillMaxWidth().clickable(enabled = !loading, onClick = onLoad).padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+        Text(
+            when {
+                loading -> "Loading earlier messages…"
+                error != null -> "Couldn't load earlier messages — tap to retry"
+                else -> "Load earlier messages"
+            },
+            style = Type.small.copy(color = if (error != null) Palette.error else Palette.accent),
+        )
+    }
+}
+
+/** The other chats working right now, one tap away. */
+@Composable
+private fun ActiveStrip(others: List<SessionInfo>, onSwitch: (String) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Palette.surface)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        for (s in others) {
+            Row(
+                Modifier
+                    .border(1.dp, Palette.border, RoundedCornerShape(50))
+                    .clickable { onSwitch(s.id) }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatusDot(working = true)
+                Spacer(Modifier.width(6.dp))
+                Text(s.title, style = Type.tiny.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+            }
+        }
     }
 }
 
