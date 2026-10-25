@@ -63,7 +63,7 @@ fun StatsBar(store: Store, onOpen: () -> Unit) {
             Reading("✦", "$window ${pct.toInt()}%", pct / 100)
         }
         // Token flow: the new work Claude did in the last minute, across every chat.
-        s.tokens?.let { t -> Reading("⚡", "${compactCount(t.lastMinute.processed)}/min", 0.0) }
+        s.tokens?.let { t -> Reading("↯", "${compactCount(t.lastMinute.processed)}/min", 0.0) }
         Reading("load", String.format(Locale.ROOT, "%.1f", s.load.firstOrNull() ?: 0.0), loadFrac)
         if (s.swap.totalBytes > 0 && s.swap.totalBytes - s.swap.freeBytes > 0) {
             val used = s.swap.totalBytes - s.swap.freeBytes
