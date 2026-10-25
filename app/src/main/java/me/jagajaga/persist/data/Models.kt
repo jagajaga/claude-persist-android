@@ -89,7 +89,33 @@ data class ServerStats(
     val processes: Int? = null,
     /** Download and upload, bytes per second; null until the server has two readings. */
     val network: Network? = null,
+    /** Tokens through Claude across every chat (TokenFlow in daemon/src/tokenFlow.ts). */
+    val tokens: TokenFlow? = null,
     val sampledAt: Long = 0,
+)
+
+@Serializable
+data class TokenCounts(
+    val input: Long = 0,
+    val cacheWrite: Long = 0,
+    val cacheRead: Long = 0,
+    val output: Long = 0,
+    /** input + cacheWrite + output: the new work. */
+    val processed: Long = 0,
+)
+
+@Serializable
+data class TokenCalls(val lastMinute: Int = 0, val lastHour: Int = 0)
+
+@Serializable
+data class SessionTokens(val sessionId: String, val processed: Long = 0)
+
+@Serializable
+data class TokenFlow(
+    val lastMinute: TokenCounts = TokenCounts(),
+    val lastHour: TokenCounts = TokenCounts(),
+    val calls: TokenCalls = TokenCalls(),
+    val bySession: List<SessionTokens> = emptyList(),
 )
 
 @Serializable

@@ -62,6 +62,8 @@ fun StatsBar(store: Store, onOpen: () -> Unit) {
         usage?.let { u -> me.jagajaga.persist.ui.chat.Options.nearest(u.windows) }?.let { (window, pct) ->
             Reading("✦", "$window ${pct.toInt()}%", pct / 100)
         }
+        // Token flow: the new work Claude did in the last minute, across every chat.
+        s.tokens?.let { t -> Reading("⚡", "${compactCount(t.lastMinute.processed)}/min", 0.0) }
         Reading("load", String.format(Locale.ROOT, "%.1f", s.load.firstOrNull() ?: 0.0), loadFrac)
         if (s.swap.totalBytes > 0 && s.swap.totalBytes - s.swap.freeBytes > 0) {
             val used = s.swap.totalBytes - s.swap.freeBytes
@@ -81,6 +83,14 @@ private fun Reading(label: String, value: String, fraction: Double) {
         if (label.isNotEmpty()) Text("$label ", style = Type.tiny.copy(fontSize = 11.sp, color = Palette.faint))
         Text(value, style = Type.tiny.copy(fontSize = 11.sp, color = if (color == Palette.muted) Palette.text else color))
     }
+}
+
+/** "13k", "1.2M", "940": a token count, short enough for the bar. */
+internal fun compactCount(n: Long): String = when {
+    n >= 1_000_000 -> String.format(Locale.ROOT, "%.1fM", n / 1_000_000.0)
+    n >= 10_000 -> String.format(Locale.ROOT, "%.0fk", n / 1_000.0)
+    n >= 1_000 -> String.format(Locale.ROOT, "%.1fk", n / 1_000.0)
+    else -> n.toString()
 }
 
 /** "1.2M", "340K", "12B": a rate per second, short enough for the bar. */

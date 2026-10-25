@@ -10,4 +10,12 @@ class StatsBarTest {
         assertEquals("340K", rate(340.0 * 1024))
         assertEquals("12B", rate(12.0))
     }
+
+    @Test
+    fun `token counts are short`() {
+        assertEquals("13k", compactCount(13_224))
+        assertEquals("1.2k", compactCount(1_240))
+        assertEquals("620", compactCount(620))
+        assertEquals("28.4M", compactCount(28_375_694))
+    }
 }

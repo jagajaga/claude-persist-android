@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,14 +55,15 @@ fun StatsScreen(store: Store) {
         if (s == null) {
             Text(error ?: "Loading…", style = Type.small)
         } else {
-            Gauges(s, error)
+            val sessions by store.sessions.collectAsState()
+            Gauges(s, error, remember(sessions) { sessions.associate { it.id to it.title } })
         }
         ProcessesSection(store)
     }
 }
 
 @Composable
-private fun Gauges(s: ServerStats, error: String?) {
+private fun Gauges(s: ServerStats, error: String?, titles: Map<String, String> = emptyMap()) {
     error?.let { Text("Last update failed: $it", style = Type.tiny.copy(color = Palette.warn)) }
     val cpu = s.cpuPercent
     Meter("CPU", cpu?.let { String.format(Locale.ROOT, "%.0f%%", it) } ?: "…", "${s.cores} cores", (cpu ?: 0.0) / 100)
@@ -81,6 +83,7 @@ private fun Gauges(s: ServerStats, error: String?) {
         val used = d.totalBytes - d.freeBytes
         Meter("Disk", "${bytes(used)} of ${bytes(d.totalBytes)}", d.path, ratio(used, d.totalBytes))
     }
+    s.tokens?.let { TokensCard(it, titles) }
     Card {
         Text("Uptime ${uptime(s.uptimeSeconds)}", style = Type.body)
         s.processes?.let { Text("$it processes", style = Type.small) }
@@ -126,5 +129,44 @@ private fun Meter(title: String, value: String, note: String, fraction: Double) 
         Box(Modifier.fillMaxWidth().height(6.dp).background(Color(0xFFEDEDED), RoundedCornerShape(3.dp))) {
             Box(Modifier.fillMaxWidth(f).height(6.dp).background(color, RoundedCornerShape(3.dp)))
         }
+    }
+}
+
+/**
+ * Tokens through Claude, every chat together. "Processed" is the new work:
+ * fresh input, cache writes and output. Cache reads -- the conversation read
+ * again from cache at each step, typically nineteen in twenty of all tokens
+ * -- are shown beside it, not folded in.
+ */
+@Composable
+private fun TokensCard(t: me.jagajaga.persist.data.TokenFlow, titles: Map<String, String>) {
+    Card {
+        Row {
+            Text("Tokens", style = Type.small.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
+            Text("${t.calls.lastMinute} calls/min · ${t.calls.lastHour} in the hour", style = Type.tiny)
+        }
+        Text("${compactCount(t.lastMinute.processed)}/min processed", style = Type.title.copy(fontSize = 20.sp, fontWeight = FontWeight.Medium))
+        TokenRow("Last minute", t.lastMinute)
+        TokenRow("Last hour", t.lastHour)
+        if (t.bySession.isNotEmpty()) {
+            Text("Busiest chats, last 5 min", style = Type.tiny.copy(fontWeight = FontWeight.SemiBold))
+            for (s in t.bySession) {
+                Row {
+                    Text(titles[s.sessionId] ?: s.sessionId.take(8), style = Type.small.copy(color = Palette.text), maxLines = 1, modifier = Modifier.weight(1f))
+                    Text(compactCount(s.processed), style = Type.small)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TokenRow(label: String, c: me.jagajaga.persist.data.TokenCounts) {
+    Column {
+        Text(label, style = Type.tiny)
+        Text(
+            "in ${compactCount(c.input)} · cache write ${compactCount(c.cacheWrite)} · out ${compactCount(c.output)} · cache read ${compactCount(c.cacheRead)}",
+            style = Type.small.copy(color = Palette.text),
+        )
     }
 }
