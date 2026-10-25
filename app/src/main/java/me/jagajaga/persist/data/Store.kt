@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -56,9 +57,10 @@ class Store(
     /** Plan limits, account-wide, live. */
     val usage: StateFlow<UsageSnapshot?> = _usage
 
+    private val viewedSerializer = kotlinx.serialization.builtins.MapSerializer(String.serializer(), Long.serializer())
     private val viewedFile = File(dir, "viewed.json")
     private val _viewed = MutableStateFlow(
-        runCatching { json.decodeFromString(kotlinx.serialization.builtins.MapSerializer(kotlinx.serialization.builtins.serializer<String>(), kotlinx.serialization.builtins.serializer<Long>()), viewedFile.readText()) }.getOrNull() ?: emptyMap(),
+        runCatching { json.decodeFromString(viewedSerializer, viewedFile.readText()) }.getOrNull() ?: emptyMap(),
     )
     /** When each chat was last on screen here: newer activity is unread. */
     val viewed: StateFlow<Map<String, Long>> = _viewed
@@ -146,7 +148,7 @@ class Store(
 
     fun markViewed(sessionId: String) {
         _viewed.value = _viewed.value + (sessionId to System.currentTimeMillis())
-        save("viewed.json", kotlinx.serialization.builtins.MapSerializer(kotlinx.serialization.builtins.serializer<String>(), kotlinx.serialization.builtins.serializer<Long>()), _viewed.value)
+        save("viewed.json", viewedSerializer, _viewed.value)
     }
 
     suspend fun rename(sessionId: String, title: String) {
