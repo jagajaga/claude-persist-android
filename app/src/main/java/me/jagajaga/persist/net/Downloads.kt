@@ -27,18 +27,29 @@ class Downloads(private val cookie: () -> String?) {
 
     fun cookieHeader(): String = cookie() ?: ""
 
-    suspend fun download(url: String, target: File, onProgress: (Long, Long) -> Unit = { _, _ -> }): File = withContext(Dispatchers.IO) {
+    /**
+     * [withLogin] sends the Authelia cookie: right for our own server, and
+     * never for anyone else's -- an image link in a chat must not hand a
+     * third-party site the session.
+     */
+    suspend fun download(
+        url: String,
+        target: File,
+        withLogin: Boolean = true,
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ): File = withContext(Dispatchers.IO) {
         target.parentFile?.mkdirs()
         val part = File(target.path + ".part")
         var failures = 0
         while (true) {
             val have = if (part.exists()) part.length() else 0L
-            val request = Request.Builder().url(url).header("Cookie", cookieHeader())
+            val request = Request.Builder().url(url)
+                .apply { if (withLogin) header("Cookie", cookieHeader()) }
                 .apply { if (have > 0) header("Range", "bytes=$have-") }
                 .build()
             try {
                 client.newCall(request).execute().use { response ->
-                    if (response.code in 300..399 || response.code == 401 || response.code == 403) throw NeedsLoginException()
+                    if (withLogin && (response.code in 300..399 || response.code == 401 || response.code == 403)) throw NeedsLoginException()
                     if (response.code == 416 && have > 0) return@use // nothing left to fetch: it is all here
                     if (!response.isSuccessful) throw IOException("The server answered ${response.code}: ${response.body?.string()?.take(200)}")
                     val append = response.code == 206

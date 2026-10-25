@@ -50,4 +50,23 @@ class LinksTest {
         assertEquals("/w/app/build.gradle.kts", Links.wholeLink("/w/app/build.gradle.kts"))
         assertNull(Links.wholeLink("npm run build"))
     }
+
+    @Test
+    fun `media a message mentions, each once, in order, nothing else`() {
+        val text = """
+            Saved the frame to /tmp/art/full3.png and the clip to `/tmp/art/h.mp4`.
+            Compare with https://example.com/ref.jpg?size=large and /tmp/art/full3.png again.
+            The log is /tmp/art/run.log and the page is https://example.com/docs.
+        """.trimIndent()
+        assertEquals(
+            listOf("/tmp/art/full3.png", "/tmp/art/h.mp4", "https://example.com/ref.jpg?size=large"),
+            Links.mediaIn(text),
+        )
+    }
+
+    @Test
+    fun `a long listing of screenshots gives a few previews, not all of them`() {
+        val text = (1..50).joinToString("\n") { "/shots/s$it.png" }
+        assertEquals(6, Links.mediaIn(text).size)
+    }
 }

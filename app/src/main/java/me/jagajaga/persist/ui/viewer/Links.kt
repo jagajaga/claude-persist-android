@@ -61,6 +61,25 @@ object Links {
         return out
     }
 
+    /**
+     * The pictures and videos a message mentions, by path or URL, in order,
+     * each once: what the chat shows previews of. Capped, so a listing of a
+     * hundred screenshots doesn't become a hundred previews.
+     */
+    fun mediaIn(text: String, max: Int = 6): List<String> =
+        pattern.findAll(text)
+            .map { m ->
+                when (val t = target(m.value)) {
+                    is LinkTarget.ServerFile -> t.path
+                    is LinkTarget.Web -> t.url
+                    is LinkTarget.External -> t.uri
+                }
+            }
+            .filter { kind(it.substringBefore('?')) == FileKind.Image || kind(it.substringBefore('?')) == FileKind.Video }
+            .distinct()
+            .take(max)
+            .toList()
+
     /** Inline code that is nothing but a path or URL is tappable too. */
     fun wholeLink(text: String): String? = pattern.matchEntire(text.trim())?.value
 }

@@ -79,6 +79,7 @@ import androidx.compose.ui.text.withLink
 import me.jagajaga.persist.ui.viewer.FileKind
 import me.jagajaga.persist.ui.viewer.Links
 import me.jagajaga.persist.ui.viewer.LocalImage
+import me.jagajaga.persist.ui.viewer.MediaPreview
 import me.jagajaga.persist.ui.viewer.ServerImage
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -311,6 +312,7 @@ private fun UserBubble(item: ThreadItem.User) {
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             if (item.text.isNotBlank()) Text(item.text, style = Type.body)
+            MediaRow(remember(item.text) { Links.mediaIn(item.text) })
             if (item.images.isNotEmpty()) {
                 // Pictures as pictures; anything else (or a picture with no copy on the server) as a chip.
                 val uri = LocalUriHandler.current
@@ -335,6 +337,16 @@ private fun AssistantText(item: ThreadItem.Assistant) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         item.agent?.let { AgentChip(it) }
         MarkdownText(item.text)
+        MediaRow(remember(item.text) { Links.mediaIn(item.text) })
+    }
+}
+
+/** Previews of the pictures and videos a message names, one under another. */
+@Composable
+private fun MediaRow(media: List<String>, maxHeight: androidx.compose.ui.unit.Dp = 240.dp) {
+    if (media.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (m in media) MediaPreview(m, maxHeight = maxHeight)
     }
 }
 
@@ -385,10 +397,21 @@ private fun ToolCard(item: ThreadItem.Tool) {
             Text(item.name, style = Type.body.copy(fontWeight = FontWeight.SemiBold))
             Text(item.label, style = Type.code.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         }
-        // Claude looking at a picture: show the picture.
-        if (item.name == "Read" && item.label.startsWith("/") && Links.kind(item.label) == FileKind.Image) {
+        // Claude looking at a picture: show the picture. And whatever pictures
+        // or videos the call made or named -- a screenshot saved, a clip cut.
+        val readsImage = item.name == "Read" && item.label.startsWith("/") && Links.kind(item.label) == FileKind.Image
+        if (readsImage) {
             Spacer(Modifier.size(8.dp))
             ServerImage(item.label, maxHeight = 200.dp)
+        }
+        if (item.done) {
+            val media = remember(item.input, item.result) {
+                Links.mediaIn(item.input + "\n" + (item.result ?: ""), max = 4).filter { !(readsImage && it == item.label) }
+            }
+            if (media.isNotEmpty()) {
+                Spacer(Modifier.size(8.dp))
+                MediaRow(media, maxHeight = 180.dp)
+            }
         }
         if (open) {
             if (item.name in FILE_TOOLS && item.label.startsWith("/")) {
