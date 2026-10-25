@@ -65,6 +65,7 @@ fun MediaPreview(target: String, maxHeight: Dp = 240.dp, hideOnFailure: Boolean 
     val c = LocalContext.current.container
     val context = LocalContext.current
     val uri = LocalUriHandler.current
+    val gallery = LocalGallery.current
     val web = target.startsWith("http://") || target.startsWith("https://")
     val video = Links.kind(target.substringBefore('?')) == FileKind.Video
     // Our own server gets the login; any other site never sees it.
@@ -93,7 +94,11 @@ fun MediaPreview(target: String, maxHeight: Dp = 240.dp, hideOnFailure: Boolean 
         modifier
             .clip(RoundedCornerShape(10.dp))
             .background(Palette.codeBg)
-            .clickable { uri.openUri(target) },
+            .clickable {
+                // The viewer opens on this one and swipes through the rest of the chat's.
+                Gallery.items = gallery.ifEmpty { listOf(target) }
+                uri.openUri(Links.MEDIA + target)
+            },
         contentAlignment = Alignment.Center,
     ) {
         when {
@@ -150,4 +155,13 @@ private fun decodeThumb(file: File, target: Int = 900): ImageBitmap? {
     while (bounds.outWidth / (sample * 2) >= target || bounds.outHeight / (sample * 2) >= target) sample *= 2
     val bitmap: Bitmap = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return null
     return bitmap.asImageBitmap()
+}
+
+/** The pictures and videos of the chat on screen, for the viewer to swipe through. */
+val LocalGallery = androidx.compose.runtime.staticCompositionLocalOf { emptyList<String>() }
+
+/** Handed from the tapped preview to the viewer it opens. */
+object Gallery {
+    @Volatile
+    var items: List<String> = emptyList()
 }

@@ -10,6 +10,9 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
+/** The file isn't there (or isn't one): no point asking again. */
+class NotFoundException(message: String) : IOException(message)
+
 /** Authelia answered instead of the server: the login has to be redone. */
 class NeedsLoginException : IOException("Log in again to open this")
 
@@ -51,6 +54,9 @@ class Downloads(private val cookie: () -> String?) {
                 client.newCall(request).execute().use { response ->
                     if (withLogin && (response.code in 300..399 || response.code == 401 || response.code == 403)) throw NeedsLoginException()
                     if (response.code == 416 && have > 0) return@use // nothing left to fetch: it is all here
+                    // Not there, or not a file: final. Retrying for minutes left grey
+                    // placeholders where a link named a file that doesn't exist.
+                    if (response.code in 400..499) throw NotFoundException("The server answered ${response.code}: ${response.body?.string()?.take(200)}")
                     if (!response.isSuccessful) throw IOException("The server answered ${response.code}: ${response.body?.string()?.take(200)}")
                     val append = response.code == 206
                     val body = response.body ?: throw IOException("empty answer")
@@ -73,6 +79,8 @@ class Downloads(private val cookie: () -> String?) {
                 if (!part.renameTo(target)) throw IOException("could not save ${target.name}")
                 return@withContext target
             } catch (e: NeedsLoginException) {
+                throw e
+            } catch (e: NotFoundException) {
                 throw e
             } catch (e: IOException) {
                 if (++failures >= 8) throw e

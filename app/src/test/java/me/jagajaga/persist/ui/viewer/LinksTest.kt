@@ -69,4 +69,10 @@ class LinksTest {
         val text = (1..50).joinToString("\n") { "/shots/s$it.png" }
         assertEquals(6, Links.mediaIn(text).size)
     }
+
+    @Test
+    fun `a tapped preview always opens the viewer, even for a web picture`() {
+        assertEquals(LinkTarget.ServerFile("https://example.com/a.jpg"), Links.target(Links.MEDIA + "https://example.com/a.jpg"))
+        assertEquals(LinkTarget.ServerFile("/w/a.png"), Links.target(Links.MEDIA + "/w/a.png"))
+    }
 }

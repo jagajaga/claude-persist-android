@@ -7,12 +7,20 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.webkit.MimeTypeMap
-import android.widget.MediaController
 import android.widget.VideoView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -69,22 +77,50 @@ import java.io.File
  */
 @Composable
 fun ViewerScreen(c: Container, path: String, onClose: () -> Unit) {
-    when (Links.kind(path)) {
+    // Opened from a chat's preview: swipe through every picture and video in it.
+    val gallery = Gallery.items
+    val at = gallery.indexOf(path)
+    if (at >= 0 && gallery.size > 1) {
+        GalleryViewer(c, gallery, at, onClose)
+        return
+    }
+    when (Links.kind(path.substringBefore('?'))) {
         FileKind.Text -> TextFileViewer(c.store, path, onClose)
-        FileKind.Video, FileKind.Audio -> Frame(path, onClose, dark = true) { MediaPlayer(c, path) }
-        FileKind.Image -> Frame(path, onClose, dark = true) { Fetched(c, path) { ZoomableImage(it) } }
+        FileKind.Video, FileKind.Audio -> Frame(path, onClose, dark = true) { MediaPlayer(c, path, active = true) }
+        FileKind.Image -> Frame(path, onClose, dark = true) { Fetched(c, path) { ZoomableImage(it) {} } }
         FileKind.Pdf -> Frame(path, onClose) { Fetched(c, path) { PdfPages(it) } }
         FileKind.Other -> Frame(path, onClose) { Fetched(c, path) { OpenWith(it) } }
     }
 }
 
+/** Swipe through a chat's pictures and videos, as the panel's lightbox does. */
 @Composable
-private fun Frame(path: String, onClose: () -> Unit, dark: Boolean = false, content: @Composable BoxScope.() -> Unit) {
+private fun GalleryViewer(c: Container, items: List<String>, start: Int, onClose: () -> Unit) {
+    val pager = rememberPagerState(initialPage = start) { items.size }
+    // A zoomed picture pans under the finger; only at 1x does a swipe change picture.
+    var zoomed by remember { mutableStateOf(false) }
+    val current = items[pager.currentPage]
+    Frame(current, onClose, dark = true, title = "${current.substringBefore('?').substringAfterLast('/')}  ·  ${pager.currentPage + 1}/${items.size}") {
+        HorizontalPager(state = pager, userScrollEnabled = !zoomed, key = { items[it] }, beyondViewportPageCount = 1) { page ->
+            val item = items[page]
+            Box(Modifier.fillMaxSize()) {
+                if (Links.kind(item.substringBefore('?')) == FileKind.Video) {
+                    MediaPlayer(c, item, active = page == pager.currentPage)
+                } else {
+                    Fetched(c, item) { file -> ZoomableImage(file) { if (page == pager.currentPage) zoomed = it } }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Frame(path: String, onClose: () -> Unit, dark: Boolean = false, title: String? = null, content: @Composable BoxScope.() -> Unit) {
     val fg = if (dark) Color.White else Palette.text
     Column(Modifier.fillMaxSize().background(if (dark) Color.Black else Palette.surface)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = fg) }
-            Text(path.substringAfterLast('/'), style = Type.title.copy(color = fg), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(title ?: path.substringBefore('?').substringAfterLast('/'), style = Type.title.copy(color = fg), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         }
         Box(Modifier.fillMaxSize()) { content() }
     }
@@ -100,8 +136,11 @@ private fun BoxScope.Fetched(c: Container, path: String, show: @Composable BoxSc
     var attempt by remember(path) { mutableStateOf(0) }
     LaunchedEffect(path, attempt) {
         error = null
-        val target = File(context.cacheDir, "viewer/${path.hashCode().toUInt()}-${path.substringAfterLast('/')}")
-        runCatching { c.downloads.download(c.settings.fileUrl(path), target) { done, total -> progress = done to total } }
+        val web = path.startsWith("http://") || path.startsWith("https://")
+        val url = if (web) path else c.settings.fileUrl(path)
+        val target = File(context.cacheDir, "viewer/${path.hashCode().toUInt()}-${path.substringBefore('?').substringAfterLast('/')}")
+        // Our own server gets the login; another site never sees it.
+        runCatching { c.downloads.download(url, target, withLogin = !web || path.startsWith(c.settings.baseUrl)) { done, total -> progress = done to total } }
             .onSuccess { file = it }
             .onFailure { error = it.message ?: "Couldn't open it" }
     }
@@ -121,7 +160,7 @@ private fun BoxScope.Fetched(c: Container, path: String, show: @Composable BoxSc
 }
 
 @Composable
-private fun BoxScope.ZoomableImage(file: File) {
+private fun BoxScope.ZoomableImage(file: File, onZoomed: (Boolean) -> Unit) {
     val bitmap = remember(file) { decodeBounded(file) }
     if (bitmap == null) {
         Text("Can't show this image", style = Type.body.copy(color = Color.White), modifier = Modifier.align(Alignment.Center))
@@ -129,6 +168,7 @@ private fun BoxScope.ZoomableImage(file: File) {
     }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    LaunchedEffect(scale > 1f) { onZoomed(scale > 1f) }
     Image(
         bitmap.asImageBitmap(),
         contentDescription = null,
@@ -141,10 +181,20 @@ private fun BoxScope.ZoomableImage(file: File) {
                     if (scale > 1f) { scale = 1f; offset = Offset.Zero } else scale = 2.5f
                 })
             }
+            // Pinch always zooms; one finger pans only when zoomed in, and is
+            // otherwise left alone so the gallery can swipe to the next picture.
             .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(1f, 8f)
-                    offset = if (scale == 1f) Offset.Zero else offset + pan
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val fingers = event.changes.count { it.pressed }
+                        if (fingers > 1 || scale > 1f) {
+                            scale = (scale * event.calculateZoom()).coerceIn(1f, 8f)
+                            offset = if (scale == 1f) Offset.Zero else offset + event.calculatePan()
+                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
                 }
             }
             .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y),
@@ -162,30 +212,82 @@ private fun decodeBounded(file: File, max: Int = 4096): Bitmap? {
 
 /** Streamed straight from the server with Range requests: starts at once and seeks. */
 @Composable
-private fun BoxScope.MediaPlayer(c: Container, path: String) {
+private fun BoxScope.MediaPlayer(c: Container, path: String, active: Boolean) {
     var error by remember(path) { mutableStateOf<String?>(null) }
-    val url = c.settings.fileUrl(path)
-    val cookie = c.downloads.cookieHeader()
+    val web = path.startsWith("http://") || path.startsWith("https://")
+    val url = if (web) path else c.settings.fileUrl(path)
+    val headers = if (!web || path.startsWith(c.settings.baseUrl)) mapOf("Cookie" to c.downloads.cookieHeader()) else emptyMap()
     var view by remember { mutableStateOf<VideoView?>(null) }
+    var ready by remember(path) { mutableStateOf(false) }
+    var playing by remember(path) { mutableStateOf(false) }
+    var position by remember(path) { mutableStateOf(0) }
+    var duration by remember(path) { mutableStateOf(0) }
+    var dragging by remember(path) { mutableStateOf<Float?>(null) }
+    var controls by remember(path) { mutableStateOf(true) }
     DisposableEffect(path) { onDispose { view?.stopPlayback() } }
+    // Plays only while it is the page in view: a neighbour being laid out must not start talking.
+    LaunchedEffect(active, ready) {
+        val v = view ?: return@LaunchedEffect
+        if (!ready) return@LaunchedEffect
+        if (active) { v.start(); playing = true } else { v.pause(); playing = false }
+    }
+    LaunchedEffect(path) {
+        while (true) {
+            view?.let { v -> if (ready && dragging == null) { position = v.currentPosition; playing = v.isPlaying } }
+            kotlinx.coroutines.delay(250)
+        }
+    }
     AndroidView(
         factory = { ctx ->
             VideoView(ctx).apply {
-                val controller = MediaController(ctx)
-                controller.setAnchorView(this)
-                setMediaController(controller)
-                setOnPreparedListener { start(); controller.show(3000) }
+                setOnPreparedListener { mp ->
+                    duration = mp.duration
+                    ready = true
+                }
+                setOnCompletionListener { playing = false; controls = true }
                 setOnErrorListener { _, what, extra ->
                     error = "Can't play this ($what/$extra). If the login expired, log in again."
                     true
                 }
-                setVideoURI(Uri.parse(url), mapOf("Cookie" to cookie))
+                setVideoURI(Uri.parse(url), headers)
                 view = this
             }
         },
-        modifier = Modifier.fillMaxWidth().align(Alignment.Center),
+        modifier = Modifier.fillMaxWidth().align(Alignment.Center).clickable { controls = !controls },
     )
-    error?.let { Text(it, style = Type.small.copy(color = Color.White), modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)) }
+    if (controls && ready) {
+        // The panel's player: play/pause, a bar to pick any moment, the time.
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color(0x99000000)).padding(horizontal = 12.dp, vertical = 6.dp)) {
+            androidx.compose.material3.Slider(
+                value = dragging ?: position.toFloat(),
+                onValueChange = { dragging = it },
+                onValueChangeFinished = {
+                    dragging?.let { view?.seekTo(it.toInt()); position = it.toInt() }
+                    dragging = null
+                },
+                valueRange = 0f..duration.coerceAtLeast(1).toFloat(),
+                colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = {
+                    view?.let { v -> if (v.isPlaying) { v.pause(); playing = false } else { v.start(); playing = true } }
+                }) {
+                    Icon(
+                        if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (playing) "Pause" else "Play",
+                        tint = Color.White,
+                    )
+                }
+                Text("${mmss((dragging ?: position.toFloat()).toInt())} / ${mmss(duration)}", style = Type.small.copy(color = Color.White))
+            }
+        }
+    }
+    error?.let { Text(it, style = Type.small.copy(color = Color.White), modifier = Modifier.align(Alignment.TopCenter).padding(16.dp)) }
+}
+
+private fun mmss(ms: Int): String {
+    val s = (ms / 1000).coerceAtLeast(0)
+    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s % 3600) / 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
 
 @Composable

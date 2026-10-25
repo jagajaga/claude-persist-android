@@ -169,4 +169,15 @@ class ThreadModelTest {
         assertEquals(listOf("second", "first"), ThreadModel.prompts(items).map { it.second })
         assertEquals(40L, ThreadModel.turnStart(events))
     }
+
+    @Test
+    fun `the gallery is every picture and video in the chat, in order, once`() {
+        val events = listOf(
+            obj("""{"seq":1,"event":{"type":"user_message","text":"look","attachments":[{"kind":"image","label":"a.png","path":"/up/a.png"}]}}"""),
+            obj("""{"seq":2,"event":{"type":"tool_use","toolUseId":"t","toolName":"Read","input":{"file_path":"/w/b.jpg"}}}"""),
+            obj("""{"seq":3,"event":{"type":"tool_result","toolUseId":"t","summary":"ok"}}"""),
+            obj("""{"seq":4,"event":{"type":"assistant_text","text":"Cut /w/c.mp4 from /w/b.jpg; log in /w/run.log"}}"""),
+        )
+        assertEquals(listOf("/up/a.png", "/w/b.jpg", "/w/c.mp4"), ThreadModel.media(ThreadModel.build(events, emptyList())))
+    }
 }

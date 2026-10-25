@@ -10,6 +10,8 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import me.jagajaga.persist.data.OutgoingMessage
+import me.jagajaga.persist.ui.viewer.FileKind
+import me.jagajaga.persist.ui.viewer.Links
 
 /** What the chat screen draws, built from the raw events. */
 sealed interface ThreadItem {
@@ -254,6 +256,29 @@ object ThreadModel {
             if (window > 0) return (used / window).coerceIn(0.0, 1.0)
         }
         return null
+    }
+
+    /**
+     * Every picture and video in the chat, in order, each once: what the
+     * viewer swipes through, as the panel's lightbox does. The same ones the
+     * chat shows previews of.
+     */
+    fun media(items: List<ThreadItem>): List<String> {
+        val out = LinkedHashSet<String>()
+        fun isMedia(p: String) = Links.kind(p.substringBefore('?')).let { it == FileKind.Image || it == FileKind.Video }
+        for (item in items) when (item) {
+            is ThreadItem.User -> {
+                item.paths.filterNotNull().filter(::isMedia).forEach { out += it }
+                out += Links.mediaIn(item.text)
+            }
+            is ThreadItem.Assistant -> out += Links.mediaIn(item.text)
+            is ThreadItem.Tool -> {
+                if (item.name == "Read" && item.label.startsWith("/") && isMedia(item.label)) out += item.label
+                if (item.done) out += Links.mediaIn(item.input + "\n" + (item.result ?: ""), max = 4)
+            }
+            else -> {}
+        }
+        return out.toList()
     }
 
     /** The newest thing you asked, for the prompt bar at the top. */

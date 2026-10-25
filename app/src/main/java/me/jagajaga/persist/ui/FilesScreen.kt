@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -61,10 +62,20 @@ fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)?
     var listing by remember { mutableStateOf<FsListing?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var viewing by remember { mutableStateOf<FsEntry?>(null) }
+    // Made before the viewer can take over the screen, so coming back from a
+    // file finds the list where you left it; and each folder keeps its own place.
+    val listState = rememberLazyListState()
+    val places = remember { HashMap<String, Pair<Int, Int>>() }
+    fun go(to: String) {
+        places[path] = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        path = to
+    }
 
     LaunchedEffect(path) {
         error = null
         listing = runCatching { store.list(path) }.onFailure { error = it.message }.getOrNull()
+        val (index, offset) = places[path] ?: (0 to 0)
+        listState.scrollToItem(index, offset)
     }
 
     val file = viewing
@@ -79,7 +90,7 @@ fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)?
             Modifier.fillMaxWidth().background(Palette.surface).padding(end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { listing?.parent?.let { path = it } }, enabled = listing?.parent != null) {
+            IconButton(onClick = { listing?.parent?.let { go(it) } }, enabled = listing?.parent != null) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Up")
             }
             Text(path, style = Type.small.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
@@ -89,14 +100,22 @@ fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)?
         }
         error?.let { Text(it, style = Type.small.copy(color = Palette.error), modifier = Modifier.padding(14.dp)) }
         val entries = listing?.entries.orEmpty().let { all -> if (pickFolder != null) all.filter { it.isDir } else all }
-        LazyColumn(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState) {
             items(entries, key = { it.name }) { entry ->
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .background(Palette.surface)
                         .clickable {
-                            if (entry.isDir) path = path.trimEnd('/') + "/" + entry.name else viewing = entry
+                            if (entry.isDir) {
+                                go(path.trimEnd('/') + "/" + entry.name)
+                            } else {
+                                // A picture or video swipes on through the folder's others.
+                                val here = path.trimEnd('/')
+                                me.jagajaga.persist.ui.viewer.Gallery.items = entries.filter { !it.isDir }.map { "$here/${it.name}" }
+                                    .filter { me.jagajaga.persist.ui.viewer.Links.kind(it).let { k -> k == me.jagajaga.persist.ui.viewer.FileKind.Image || k == me.jagajaga.persist.ui.viewer.FileKind.Video } }
+                                viewing = entry
+                            }
                         }
                         .padding(horizontal = 16.dp, vertical = 11.dp),
                     verticalAlignment = Alignment.CenterVertically,

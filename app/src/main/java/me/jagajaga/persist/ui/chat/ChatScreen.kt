@@ -262,6 +262,9 @@ fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
         val firstVisible by remember { derivedStateOf { listState.firstVisibleItemIndex - headerRows } }
         val reading = prompts.firstOrNull { it.first <= firstVisible }?.second ?: prompts.lastOrNull()?.second
         if (reading != null) PromptBar(reading, prompts) { index -> pinned = false; scope.launch { listState.animateScrollToItem(index + headerRows) } }
+        // Every picture and video here: a tapped preview opens the viewer on it, swiping through the rest.
+        val media = remember(items) { ThreadModel.media(items) }
+        androidx.compose.runtime.CompositionLocalProvider(me.jagajaga.persist.ui.viewer.LocalGallery provides media) {
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -288,6 +291,7 @@ fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
             if (session?.working == true) item(key = "working") {
                 WorkingRow(ThreadModel.turnStart(events), onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } })
             }
+        }
         }
         // Waiting on you: pinned above the input so it is never scrolled past.
         val waiting = remember(items) { ThreadModel.waiting(items) }

@@ -15,9 +15,13 @@ sealed interface LinkTarget {
 enum class FileKind { Image, Video, Audio, Pdf, Text, Other }
 
 object Links {
+    /** A preview tapped: always the viewer, even for a picture on the web. */
+    const val MEDIA = "persist-media:"
+
     fun target(uri: String): LinkTarget {
         val u = uri.trim()
         return when {
+            u.startsWith(MEDIA) -> LinkTarget.ServerFile(u.removePrefix(MEDIA))
             u.startsWith("http://", ignoreCase = true) || u.startsWith("https://", ignoreCase = true) -> LinkTarget.Web(u)
             u.startsWith("file://") -> LinkTarget.ServerFile(cleanPath(URLDecoder.decode(u.removePrefix("file://"), "UTF-8")))
             u.startsWith("/") -> LinkTarget.ServerFile(cleanPath(u))
