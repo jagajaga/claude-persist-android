@@ -137,4 +137,36 @@ class ThreadModelTest {
         assertEquals(0.25, ThreadModel.contextFill(events)!!, 1e-9)
         assertEquals(null, ThreadModel.contextFill(emptyList()))
     }
+
+    private fun obj(json: String) = kotlinx.serialization.json.Json.parseToJsonElement(json) as JsonObject
+
+    @Test
+    fun `an edit is shown as the lines it removed and the lines it added`() {
+        val diff = ThreadModel.diffOf("Edit", obj("""{"file_path":"/a.kt","old_string":"val x = 1\nval y = 2","new_string":"val x = 3"}"""))!!
+        assertEquals(listOf('-' to "val x = 1", '-' to "val y = 2", '+' to "val x = 3"), diff.map { it.sign to it.text })
+        assertEquals(listOf('+' to "hello"), ThreadModel.diffOf("Write", obj("""{"file_path":"/n.txt","content":"hello"}"""))!!.map { it.sign to it.text })
+        assertEquals(null, ThreadModel.diffOf("Bash", obj("""{"command":"ls"}""")))
+    }
+
+    @Test
+    fun `todos come out as a checklist with their state`() {
+        val todos = ThreadModel.todosOf("TodoWrite", obj("""{"todos":[{"content":"Build","status":"completed"},{"content":"Test","status":"in_progress","activeForm":"Testing"}]}"""))!!
+        assertEquals(listOf("completed", "in_progress"), todos.map { it.status })
+        assertEquals("Testing", todos[1].activeForm)
+    }
+
+    @Test
+    fun `what is waiting on you, and every prompt newest first`() {
+        val events = listOf(
+            obj("""{"seq":1,"ts":10,"event":{"type":"user_message","text":"first"}}"""),
+            obj("""{"seq":2,"ts":20,"event":{"type":"permission_request","requestId":"r1","toolName":"Bash","input":{}}}"""),
+            obj("""{"seq":3,"ts":30,"event":{"type":"permission_resolved","requestId":"r1","allowed":true}}"""),
+            obj("""{"seq":4,"ts":40,"event":{"type":"user_message","text":"second"}}"""),
+            obj("""{"seq":5,"ts":50,"event":{"type":"permission_request","requestId":"r2","toolName":"Write","input":{}}}"""),
+        )
+        val items = ThreadModel.build(events, emptyList())
+        assertEquals(listOf("Write"), ThreadModel.waiting(items).map { (it.second as ThreadItem.Permission).toolName })
+        assertEquals(listOf("second", "first"), ThreadModel.prompts(items).map { it.second })
+        assertEquals(40L, ThreadModel.turnStart(events))
+    }
 }

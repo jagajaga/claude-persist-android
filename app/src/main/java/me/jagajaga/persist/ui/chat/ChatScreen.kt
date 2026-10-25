@@ -32,6 +32,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.content.MediaType
@@ -67,6 +68,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -138,7 +140,6 @@ fun ChatScreen(
         val live = remember(sessions) { sessions.associateBy { it.id } }
         if (strip.size > 1) ChatStrip(strip.map { live[it.id] ?: it }, sessionId, onSelect)
         banner()
-        ThreadModel.lastPrompt(items)?.let { PromptBar(it) }
 
         val listState = rememberLazyListState()
         val hasEarlier = (events.firstOrNull()?.let { SessionLog.seqOf(it) } ?: 0) > 0
@@ -153,23 +154,39 @@ fun ChatScreen(
                 loadingEarlier = false
             }
         }
-        // A chat opens on its newest message, as soon as there is one to show.
+        // Where you were in this chat last time: at the bottom (the usual), or
+        // somewhere up, reading. Pinned is decided by your own scrolling only,
+        // so a burst of new messages can't knock you off the bottom.
+        val remembered = remember(sessionId) { ScrollMemory.get(sessionId) }
+        var pinned by remember(sessionId) { mutableStateOf(remembered?.pinned ?: true) }
         var landed by remember(sessionId) { mutableStateOf(false) }
+        val headerRows = if (hasEarlier) 1 else 0
+        suspend fun toBottom() {
+            // Past the end is clamped to the last row; the scrollBy then reaches
+            // the bottom of that row even when it is taller than the screen.
+            listState.scrollToItem(items.size + 3)
+            listState.scrollBy(100_000f)
+        }
         LaunchedEffect(sessionId, items.isNotEmpty()) {
-            if (!landed && items.isNotEmpty()) {
-                // Counted from the data, not the layout, which may not be measured yet;
-                // the list clamps an index past its end to the last item.
-                listState.scrollToItem(items.size + 3)
-                landed = true
+            if (landed || items.isEmpty()) return@LaunchedEffect
+            val at = remembered?.key?.let { key -> items.indexOfFirst { it.key == key } }?.takeIf { it >= 0 }
+            if (!pinned && at != null) listState.scrollToItem(at + headerRows, remembered!!.offset) else toBottom()
+            landed = true
+        }
+        LaunchedEffect(listState) {
+            snapshotFlow { listState.isScrollInProgress }.collect { moving ->
+                if (!moving && landed) pinned = !listState.canScrollForward
             }
         }
-        // Then follow the conversation while you are at the bottom of it; leave
-        // you be if you have scrolled up to read.
-        LaunchedEffect(items.size, streaming.length) {
-            if (!landed) return@LaunchedEffect
-            val last = listState.layoutInfo.totalItemsCount - 1
-            val atBottom = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= last - 3 } ?: true
-            if (atBottom && last >= 0) listState.scrollToItem(last)
+        DisposableEffect(sessionId) {
+            onDispose {
+                val first = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key is String && (it.key as String).startsWith("e") }
+                ScrollMemory.put(sessionId, ScrollMemory.Place(pinned, first?.key as? String, first?.let { -it.offset } ?: 0))
+            }
+        }
+        // Follow the conversation while pinned to the bottom.
+        LaunchedEffect(items.size, streaming.length, session?.working) {
+            if (landed && pinned) toBottom()
         }
         // The keyboard opening shrinks the list from below; scroll by as much,
         // so what was at the bottom stays just above the input, as in the
@@ -186,6 +203,11 @@ fun ChatScreen(
             snapshotFlow { listState.firstVisibleItemIndex }
                 .collect { first -> if (landed && first <= 1 && hasEarlier) loadEarlier() }
         }
+        // The prompt behind what you are reading, and every other one a tap away.
+        val prompts = remember(items) { ThreadModel.prompts(items) }
+        val firstVisible by remember { derivedStateOf { listState.firstVisibleItemIndex - headerRows } }
+        val reading = prompts.firstOrNull { it.first <= firstVisible }?.second ?: prompts.lastOrNull()?.second
+        if (reading != null) PromptBar(reading, prompts) { index -> pinned = false; scope.launch { listState.animateScrollToItem(index + headerRows) } }
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -209,15 +231,25 @@ fun ChatScreen(
                 )
             }
             if (streaming.isNotBlank()) item(key = "streaming") { MarkdownText(streaming) }
-            if (session?.working == true) item(key = "working") { WorkingRow(onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } }) }
+            if (session?.working == true) item(key = "working") {
+                WorkingRow(ThreadModel.turnStart(events), onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } })
+            }
         }
+        // Waiting on you: pinned above the input so it is never scrolled past.
+        val waiting = remember(items) { ThreadModel.waiting(items) }
+        if (waiting.isNotEmpty()) WaitingBar(waiting) { index -> pinned = false; scope.launch { listState.animateScrollToItem(index + headerRows) } }
         val models by store.models.collectAsState()
+        val allAgents by store.agents.collectAsState()
         var optionsOpen by remember { mutableStateOf(false) }
+        var compactAsk by remember { mutableStateOf(false) }
         Composer(
             session,
             pill = session?.let { Options.pill(it.model, it.activeModel, it.effort, models) } ?: "Default",
             filesDir = store.outgoingFilesDir,
             contextFill = remember(events) { ThreadModel.contextFill(events) },
+            agents = allAgents[sessionId].orEmpty(),
+            onStopAgent = { taskId -> scope.launch { runCatching { store.stopAgent(sessionId, taskId) } } },
+            onCompact = { compactAsk = true },
             onOptions = { optionsOpen = true },
             onToggleBypass = {
                 val bypass = session?.permissionMode == "bypassPermissions"
@@ -225,6 +257,15 @@ fun ChatScreen(
             },
         ) { text, images, files -> store.send(sessionId, text, images, files) }
         if (optionsOpen && session != null) OptionsSheet(store, session) { optionsOpen = false }
+        if (compactAsk) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { compactAsk = false },
+                title = { Text("Compact this conversation?") },
+                text = { Text("Claude summarises the conversation so far to free context. It runs as the next turn.", style = Type.body) },
+                confirmButton = { androidx.compose.material3.TextButton(onClick = { compactAsk = false; store.send(sessionId, "/compact") }) { Text("Compact") } },
+                dismissButton = { androidx.compose.material3.TextButton(onClick = { compactAsk = false }) { Text("Cancel") } },
+            )
+        }
     }
 }
 
@@ -312,14 +353,83 @@ private fun TopBar(session: SessionInfo?, onBack: () -> Unit, onStop: () -> Unit
 
 /** "☰ What was the problem?" -- which exchange you are reading. */
 @Composable
-private fun PromptBar(text: String) {
+private fun PromptBar(text: String, prompts: List<Pair<Int, String>>, onJump: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier.fillMaxWidth().background(Palette.surface).clickable { open = true }.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Menu, contentDescription = "Jump to a prompt", tint = Palette.accent, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(text.replace('\n', ' '), style = Type.small.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.heightIn(max = 420.dp)) {
+            for ((index, prompt) in prompts) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            (if (prompt == text) "✓ " else "   ") + prompt.replace('\n', ' '),
+                            style = Type.small.copy(color = Palette.text),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    onClick = { open = false; onJump(index) },
+                )
+            }
+        }
+    }
+}
+
+/** "? Allow Bash?  +1 more  Show": what is waiting on you, above the input. */
+@Composable
+private fun WaitingBar(waiting: List<Pair<Int, ThreadItem>>, onShow: (Int) -> Unit) {
+    val (index, first) = waiting.first()
+    val label = when (first) {
+        is ThreadItem.Permission -> "Allow ${first.toolName}?"
+        is ThreadItem.Question -> first.questions.firstOrNull()?.question ?: "Claude asked a question"
+        else -> ""
+    }
     Row(
-        Modifier.fillMaxWidth().background(Palette.surface).padding(horizontal = 14.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().background(Palette.accentSoft).padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Filled.Menu, contentDescription = null, tint = Palette.accent, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(text.replace('\n', ' '), style = Type.small.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("? ", style = Type.body.copy(color = Palette.warn, fontWeight = FontWeight.SemiBold))
+        Text(label, style = Type.small.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        if (waiting.size > 1) Text("+${waiting.size - 1} more  ", style = Type.tiny)
+        Text("Show", style = Type.small.copy(color = Palette.accent, fontWeight = FontWeight.SemiBold), modifier = Modifier.clickable { onShow(index) }.padding(6.dp))
+    }
+}
+
+/** The subagents working, as a count; tap for the list, each with a stop. */
+@Composable
+private fun AgentsChip(agents: List<me.jagajaga.persist.data.ActiveAgent>, onStop: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier
+                .border(1.dp, Palette.ok, RoundedCornerShape(50))
+                .clickable { open = true }
+                .padding(horizontal = 9.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusDot(working = true)
+            Spacer(Modifier.width(4.dp))
+            Text("${agents.size}", style = Type.small.copy(color = Palette.ok))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            for (a in agents) {
+                DropdownMenuItem(
+                    text = { Text(a.description.ifBlank { a.kind ?: "subagent" }, style = Type.small.copy(color = Palette.text), maxLines = 2) },
+                    trailingIcon = {
+                        val task = a.taskId
+                        if (task != null) Text("×", style = Type.title.copy(color = Palette.error), modifier = Modifier.clickable { onStop(task); open = false }.padding(6.dp))
+                    },
+                    onClick = {},
+                )
+            }
+        }
     }
 }
 
@@ -361,6 +471,64 @@ private fun AssistantText(item: ThreadItem.Assistant) {
         item.agent?.let { AgentChip(it) }
         MarkdownText(item.text)
         MediaRow(remember(item.text) { Links.mediaIn(item.text) })
+    }
+}
+
+private fun elapsed(ms: Long): String {
+    val s = (ms / 1000).coerceAtLeast(0)
+    return if (s < 60) "${s}s" else if (s < 3600) "${s / 60}m ${s % 60}s" else "${s / 3600}h ${(s % 3600) / 60}m"
+}
+
+/** TodoWrite as the panel shows it: done struck through, the active one named by what it is doing. */
+@Composable
+private fun TodoList(todos: List<Todo>) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (t in todos) {
+            val done = t.status == "completed"
+            val active = t.status == "in_progress"
+            Row(verticalAlignment = Alignment.Top) {
+                Text(if (done) "☑" else if (active) "◐" else "☐", style = Type.body.copy(color = if (active) Palette.accent else Palette.muted), modifier = Modifier.width(22.dp))
+                Text(
+                    if (active) t.activeForm ?: t.content else t.content,
+                    style = Type.small.copy(
+                        color = if (done) Palette.faint else Palette.text,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        textDecoration = if (done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/** An edit's removed lines in red and added lines in green. */
+@Composable
+private fun DiffBlock(label: String, lines: List<DiffLine>) {
+    Column {
+        Text(label, style = Type.tiny.copy(fontWeight = FontWeight.SemiBold))
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(Palette.codeBg, RoundedCornerShape(6.dp))
+                .heightIn(max = 360.dp)
+                .verticalScroll(rememberScrollState())
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 6.dp),
+        ) {
+            for (line in lines.take(2_000)) {
+                val (bg, fg) = when (line.sign) {
+                    '-' -> Color(0xFFFDECEC) to Color(0xFFB3261E)
+                    '+' -> Color(0xFFE8F5E9) to Color(0xFF1B5E20)
+                    else -> Color.Transparent to Palette.muted
+                }
+                Text(
+                    "${line.sign} ${line.text}",
+                    style = Type.code.copy(color = fg),
+                    softWrap = false,
+                    modifier = Modifier.background(bg).padding(horizontal = 8.dp),
+                )
+            }
+        }
     }
 }
 
@@ -427,6 +595,7 @@ private fun ToolCard(item: ThreadItem.Tool) {
             Spacer(Modifier.size(8.dp))
             ServerImage(item.label, maxHeight = 200.dp)
         }
+        item.todos?.let { Spacer(Modifier.size(8.dp)); TodoList(it) }
         if (item.done) {
             val media = remember(item.input, item.result) {
                 Links.mediaIn(item.input + "\n" + (item.result ?: ""), max = 4).filter { !(readsImage && it == item.label) }
@@ -446,7 +615,8 @@ private fun ToolCard(item: ThreadItem.Tool) {
                 )
             }
             Spacer(Modifier.size(8.dp))
-            DetailBlock("IN", item.input)
+            val diff = item.diff
+            if (diff != null) DiffBlock(if (item.name == "Write") "NEW" else "DIFF", diff) else DetailBlock("IN", item.input)
             item.result?.let {
                 Spacer(Modifier.size(6.dp))
                 DetailBlock("OUT", it, error = item.isError)
@@ -516,7 +686,17 @@ private fun PermissionCard(item: ThreadItem.Permission, onAnswer: (Boolean) -> U
 
 @Composable
 private fun QuestionCard(item: ThreadItem.Question, onAnswer: (Map<String, String>) -> Unit) {
-    val chosen = remember(item.key) { mutableStateMapOf<String, String>() }
+    // Per question: the options picked (several, for multi-select) and any "Other…" text.
+    val picked = remember(item.key) { mutableStateMapOf<String, Set<String>>() }
+    val other = remember(item.key) { mutableStateMapOf<String, String>() }
+    val otherOpen = remember(item.key) { mutableStateMapOf<String, Boolean>() }
+    fun answerFor(q: Q): String? {
+        val typed = other[q.question]?.trim().orEmpty().takeIf { otherOpen[q.question] == true && it.isNotEmpty() }
+        val chosen = picked[q.question].orEmpty()
+        return (chosen.toList() + listOfNotNull(typed)).takeIf { it.isNotEmpty() }?.joinToString(", ")
+    }
+    // One single-choice question: a tap is the answer, as in the panel.
+    val oneTap = item.questions.size == 1 && !item.questions[0].multiSelect
     Column(
         Modifier
             .fillMaxWidth()
@@ -530,24 +710,53 @@ private fun QuestionCard(item: ThreadItem.Question, onAnswer: (Map<String, Strin
             Text(q.question, style = Type.body)
             val answered = item.answers[q.question]
             for ((label, description) in q.options) {
-                val selected = (answered ?: chosen[q.question]) == label
+                val selected = if (answered != null) answered.split(", ").contains(label) else label in picked[q.question].orEmpty()
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .border(1.dp, if (selected) Palette.accent else Palette.border, RoundedCornerShape(10.dp))
                         .background(if (selected) Palette.accentSoft else Palette.surface, RoundedCornerShape(10.dp))
-                        .clickable(enabled = !item.resolved) { chosen[q.question] = label }
+                        .clickable(enabled = !item.resolved) {
+                            if (oneTap) {
+                                onAnswer(mapOf(q.question to label))
+                            } else {
+                                val now = picked[q.question].orEmpty()
+                                picked[q.question] = if (q.multiSelect) (if (label in now) now - label else now + label) else setOf(label)
+                                if (!q.multiSelect) otherOpen[q.question] = false
+                            }
+                        }
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                 ) {
-                    Text(label, style = Type.body.copy(fontWeight = FontWeight.Medium))
+                    Text((if (q.multiSelect) (if (selected) "☑ " else "☐ ") else "") + label, style = Type.body.copy(fontWeight = FontWeight.Medium))
                     description?.let { Text(it, style = Type.small) }
                 }
             }
+            if (!item.resolved) {
+                if (otherOpen[q.question] == true) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = other[q.question].orEmpty(),
+                        onValueChange = { other[q.question] = it },
+                        placeholder = { Text("Your answer") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    Text(
+                        "Other…",
+                        style = Type.body.copy(color = Palette.accent),
+                        modifier = Modifier.clickable {
+                            otherOpen[q.question] = true
+                            if (!q.multiSelect) picked[q.question] = emptySet()
+                        }.padding(vertical = 4.dp),
+                    )
+                }
+            } else if (answered != null && q.options.none { answered.split(", ").contains(it.first) }) {
+                Text("Answered: $answered", style = Type.small)
+            }
         }
-        if (!item.resolved) {
-            val ready = item.questions.all { chosen[it.question] != null }
+        if (!item.resolved && (!oneTap || otherOpen[item.questions[0].question] == true)) {
+            val ready = item.questions.all { answerFor(it) != null }
             Button(
-                onClick = { onAnswer(chosen.toMap()) },
+                onClick = { onAnswer(item.questions.associate { it.question to answerFor(it)!! }) },
                 enabled = ready,
                 colors = ButtonDefaults.buttonColors(containerColor = Palette.accent),
             ) { Text("Answer") }
@@ -556,11 +765,15 @@ private fun QuestionCard(item: ThreadItem.Question, onAnswer: (Map<String, Strin
 }
 
 @Composable
-private fun WorkingRow(onStop: () -> Unit) {
+private fun WorkingRow(startedAt: Long?, onStop: () -> Unit) {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(1_000) } }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         StatusDot(working = true)
         Spacer(Modifier.width(8.dp))
-        Text("Working…", style = Type.small, modifier = Modifier.weight(1f))
+        // "Working… 14:02 · 1m 12s", as the panel's row: when it began and how long so far.
+        val since = startedAt?.let { " ${clock(it)} · ${elapsed(now - it)}" } ?: ""
+        Text("Working…$since", style = Type.small, modifier = Modifier.weight(1f))
         OutlinedButton(onClick = onStop, border = BorderStroke(1.dp, Palette.border)) { Text("Stop", color = Palette.text) }
     }
 }
@@ -573,6 +786,9 @@ private fun Composer(
     pill: String,
     filesDir: java.io.File,
     contextFill: Double?,
+    agents: List<me.jagajaga.persist.data.ActiveAgent>,
+    onStopAgent: (String) -> Unit,
+    onCompact: () -> Unit,
     onOptions: () -> Unit,
     onToggleBypass: () -> Unit,
     onSend: (String, List<OutgoingImage>, List<OutgoingFile>) -> Unit,
@@ -689,9 +905,10 @@ private fun Composer(
                     .clickable(enabled = session != null, onClick = onOptions)
                     .padding(horizontal = 12.dp, vertical = 7.dp),
             )
-            contextFill?.let { ContextRing(it) }
+            contextFill?.let { Box(Modifier.clickable(onClick = onCompact).padding(4.dp)) { ContextRing(it) } }
             // Everything after this sits at the right edge, as in the panel.
             Spacer(Modifier.weight(1f))
+            if (agents.isNotEmpty()) AgentsChip(agents, onStopAgent)
             val bypass = session?.permissionMode == "bypassPermissions"
             Row(
                 Modifier

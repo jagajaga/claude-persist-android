@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,7 +48,16 @@ fun ChatListScreen(
     sessions: List<SessionInfo>,
     onOpen: (SessionInfo) -> Unit,
     onNew: () -> Unit,
+    viewed: Map<String, Long> = emptyMap(),
+    usage: String? = null,
+    onRename: (SessionInfo, String) -> Unit = { _, _ -> },
+    onDelete: (SessionInfo) -> Unit = {},
 ) {
+    var menuFor by remember { mutableStateOf<SessionInfo?>(null) }
+    var renaming by remember { mutableStateOf<SessionInfo?>(null) }
+    var deleting by remember { mutableStateOf<SessionInfo?>(null) }
+    // New activity since the chat was last on screen here.
+    fun unread(s: SessionInfo) = s.lastActivityAt > (viewed[s.id] ?: 0L) && viewed.isNotEmpty()
     var grouping by rememberSaveable { mutableStateOf(ChatGrouping.Recent) }
     val recent = remember(sessions) { ChatOrder.recent(sessions) }
     val groups = remember(sessions) { ChatOrder.byProject(sessions) }
@@ -61,14 +71,20 @@ fun ChatListScreen(
         }
         LazyColumn(Modifier.fillMaxSize()) {
             item(key = "grouping") {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Toggle("Recent", grouping == ChatGrouping.Recent) { grouping = ChatGrouping.Recent }
                     Toggle("By project", grouping == ChatGrouping.Projects) { grouping = ChatGrouping.Projects }
+                    Spacer(Modifier.weight(1f))
+                    usage?.let { Text("✦ $it", style = Type.tiny) }
                 }
             }
             if (grouping == ChatGrouping.Recent) {
                 items(recent, key = { it.id }) { session ->
-                    ChatRow(session, showFolder = true) { onOpen(session) }
+                    ChatRow(session, showFolder = true, unread = unread(session), onLongPress = { menuFor = session }) { onOpen(session) }
                     HorizontalDivider(color = Palette.border, modifier = Modifier.padding(start = 16.dp))
                 }
             } else for ((folder, list) in groups) {
@@ -83,10 +99,40 @@ fun ChatListScreen(
                     )
                 }
                 items(list, key = { it.id }) { session ->
-                    ChatRow(session, showFolder = false) { onOpen(session) }
+                    ChatRow(session, showFolder = false, unread = unread(session), onLongPress = { menuFor = session }) { onOpen(session) }
                     HorizontalDivider(color = Palette.border, modifier = Modifier.padding(start = 16.dp))
                 }
             }
+        }
+        menuFor?.let { target ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { menuFor = null },
+                title = { Text(target.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                text = { Text(target.cwd, style = Type.small) },
+                confirmButton = { androidx.compose.material3.TextButton(onClick = { renaming = target; menuFor = null }) { Text("Rename") } },
+                dismissButton = { androidx.compose.material3.TextButton(onClick = { deleting = target; menuFor = null }) { Text("Delete", color = Palette.error) } },
+            )
+        }
+        renaming?.let { target ->
+            var title by remember(target.id) { mutableStateOf(target.title) }
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { renaming = null },
+                title = { Text("Rename chat") },
+                text = { androidx.compose.material3.OutlinedTextField(value = title, onValueChange = { title = it }, singleLine = true) },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(enabled = title.isNotBlank(), onClick = { onRename(target, title.trim()); renaming = null }) { Text("Rename") }
+                },
+                dismissButton = { androidx.compose.material3.TextButton(onClick = { renaming = null }) { Text("Cancel") } },
+            )
+        }
+        deleting?.let { target ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { deleting = null },
+                title = { Text("Delete this chat?") },
+                text = { Text("\"${target.title}\" and its whole history are removed from the server. This can't be undone.", style = Type.body) },
+                confirmButton = { androidx.compose.material3.TextButton(onClick = { onDelete(target); deleting = null }) { Text("Delete", color = Palette.error) } },
+                dismissButton = { androidx.compose.material3.TextButton(onClick = { deleting = null }) { Text("Cancel") } },
+            )
         }
         FloatingActionButton(
             onClick = onNew,
@@ -110,13 +156,14 @@ private fun Toggle(text: String, on: Boolean, onClick: () -> Unit) {
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatRow(session: SessionInfo, showFolder: Boolean, onClick: () -> Unit) {
+private fun ChatRow(session: SessionInfo, showFolder: Boolean, unread: Boolean, onLongPress: () -> Unit, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .background(Palette.surface)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -135,6 +182,9 @@ private fun ChatRow(session: SessionInfo, showFolder: Boolean, onClick: () -> Un
                 maxLines = 1,
             )
         }
-        Text(ago(session.lastActivityAt), style = Type.tiny)
+        Column(horizontalAlignment = Alignment.End) {
+            Text(ago(session.lastActivityAt), style = Type.tiny)
+            if (unread) Text("●", style = Type.small.copy(color = Palette.error))
+        }
     }
 }

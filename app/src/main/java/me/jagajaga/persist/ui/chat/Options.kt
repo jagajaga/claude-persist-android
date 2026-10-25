@@ -61,6 +61,11 @@ object Options {
         return if (account.active) label else "$label · ${age(reading.at, now)}"
     }
 
+    /** "5h 42% · 7d 21%": every window with a reading, as the panel's status bar tooltip lists them. */
+    fun usageLine(windows: Map<String, me.jagajaga.persist.data.RateWindow>): String? =
+        WINDOW_ORDER.mapNotNull { kind -> windows[kind]?.utilization?.let { "${WINDOW_LABELS[kind]} ${it.roundToInt()}%" } }
+            .takeIf { it.isNotEmpty() }?.joinToString(" · ")
+
     /** What an account row says when it cannot be used as it stands. */
     fun accountLabel(account: AccountInfo): String = when {
         !account.signedIn -> "${account.name} — not signed in"

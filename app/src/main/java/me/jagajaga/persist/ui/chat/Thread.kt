@@ -32,6 +32,10 @@ sealed interface ThreadItem {
         val result: String?,
         val isError: Boolean,
         val agent: String?,
+        /** Edit / MultiEdit / Write, as the panel's DIFF and NEW blocks. */
+        val diff: List<DiffLine>? = null,
+        /** TodoWrite's list, shown as a checklist. */
+        val todos: List<Todo>? = null,
     ) : ThreadItem {
         val done: Boolean get() = result != null
     }
@@ -53,6 +57,10 @@ sealed interface ThreadItem {
     ) : ThreadItem
     data class Notice(override val key: String, val text: String, val error: Boolean) : ThreadItem
 }
+
+data class DiffLine(val sign: Char, val text: String)
+
+data class Todo(val content: String, val status: String, val activeForm: String?)
 
 data class Q(val question: String, val header: String, val multiSelect: Boolean, val options: List<Pair<String, String?>>)
 
@@ -80,6 +88,47 @@ object ThreadModel {
         return (any ?: "").replace('\n', ' ').take(200)
     }
 
+    /** What an edit changed, line by line: removals then additions, as the panel shows it. */
+    fun diffOf(name: String, input: JsonElement?): List<DiffLine>? {
+        val obj = input as? JsonObject ?: return null
+        fun lines(text: String?, sign: Char) = text?.split('\n')?.map { DiffLine(sign, it) } ?: emptyList()
+        return when (name) {
+            "Edit" -> lines(obj.str("old_string"), '-') + lines(obj.str("new_string"), '+')
+            "MultiEdit" -> (obj["edits"] as? JsonArray).orEmpty().flatMap { e ->
+                val edit = e as? JsonObject ?: return@flatMap emptyList()
+                lines(edit.str("old_string"), '-') + lines(edit.str("new_string"), '+') + DiffLine(' ', "")
+            }.dropLast(1)
+            "Write" -> lines(obj.str("content"), '+')
+            else -> null
+        }?.takeIf { it.isNotEmpty() }
+    }
+
+    fun todosOf(name: String, input: JsonElement?): List<Todo>? {
+        if (name != "TodoWrite") return null
+        val list = ((input as? JsonObject)?.get("todos") as? JsonArray).orEmpty().mapNotNull { t ->
+            val o = t as? JsonObject ?: return@mapNotNull null
+            Todo(o.str("content") ?: return@mapNotNull null, o.str("status") ?: "pending", o.str("activeForm"))
+        }
+        return list.takeIf { it.isNotEmpty() }
+    }
+
+    /** When the turn now running began: your newest message. For the working row's clock. */
+    fun turnStart(events: List<JsonObject>): Long? =
+        events.lastOrNull { (it["event"] as? JsonObject)?.str("type") == "user_message" }
+            ?.let { (it["ts"] as? JsonPrimitive)?.longOrNull }
+
+    /** Permissions and questions still waiting on you, oldest first, with their place in the list. */
+    fun waiting(items: List<ThreadItem>): List<Pair<Int, ThreadItem>> =
+        items.withIndex().filter { (_, item) ->
+            (item is ThreadItem.Permission && !item.resolved) || (item is ThreadItem.Question && !item.resolved)
+        }.map { it.index to it.value }
+
+    /** Every prompt you sent, newest first, with its place: the prompt bar's jump menu. */
+    fun prompts(items: List<ThreadItem>): List<Pair<Int, String>> =
+        items.withIndex().filter { it.value is ThreadItem.User && (it.value as ThreadItem.User).text.isNotBlank() }
+            .map { it.index to (it.value as ThreadItem.User).text }
+            .reversed()
+
     fun build(events: List<JsonObject>, outgoing: List<OutgoingMessage>): List<ThreadItem> {
         val items = mutableListOf<ThreadItem>()
         val toolIndex = HashMap<String, Int>()
@@ -106,7 +155,10 @@ object ThreadModel {
                 "tool_use" -> {
                     val name = event.str("toolName") ?: "tool"
                     val input = event["input"]
-                    val item = ThreadItem.Tool(key, name, toolLabel(name, input), input?.toString() ?: "", null, false, agent)
+                    val item = ThreadItem.Tool(
+                        key, name, toolLabel(name, input), input?.toString() ?: "", null, false, agent,
+                        diff = diffOf(name, input), todos = todosOf(name, input),
+                    )
                     event.str("toolUseId")?.let { toolIndex[it] = items.size }
                     items += item
                 }

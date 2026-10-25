@@ -196,7 +196,20 @@ private fun MainTabs(c: Container, nav: NavHostController, banner: @Composable (
             }
             banner()
             when (Tab.entries[tab]) {
-                Tab.Chats -> ChatListScreen(sessions, onOpen = { nav.navigate("chat/${it.id}") }, onNew = { nav.navigate("new") })
+                Tab.Chats -> {
+                    val viewed by c.store.viewed.collectAsState()
+                    val usage by c.store.usage.collectAsState()
+                    val scope = rememberCoroutineScope()
+                    ChatListScreen(
+                        sessions,
+                        onOpen = { nav.navigate("chat/${it.id}") },
+                        onNew = { nav.navigate("new") },
+                        viewed = viewed,
+                        usage = usage?.let { u -> me.jagajaga.persist.ui.chat.Options.usageLine(u.windows) },
+                        onRename = { s, title -> scope.launch { runCatching { c.store.rename(s.id, title) } } },
+                        onDelete = { s -> scope.launch { runCatching { c.store.delete(s.id) } } },
+                    )
+                }
                 Tab.Feed -> FeedScreen(c.store, feed) { id -> nav.navigate("chat/$id") }
                 Tab.Files -> FilesScreen(c.store, startPath = homeGuess(c))
                 Tab.Server -> StatsScreen(c.store)

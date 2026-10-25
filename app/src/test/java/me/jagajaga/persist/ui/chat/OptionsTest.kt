@@ -57,4 +57,11 @@ class OptionsTest {
         assertEquals("b — login expired", Options.accountLabel(AccountInfo("b", loginExpired = true)))
         assertEquals("c", Options.accountLabel(AccountInfo("c")))
     }
+
+    @Test
+    fun `the usage line lists every window that has a reading, in order`() {
+        val windows = mapOf("seven_day" to RateWindow(21.2), "five_hour" to RateWindow(42.6), "overage" to RateWindow(null))
+        assertEquals("5h 43% · 7d 21%", Options.usageLine(windows))
+        assertNull(Options.usageLine(emptyMap()))
+    }
 }

@@ -48,6 +48,22 @@ class Store(
 ) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
+    private val _agents = MutableStateFlow<Map<String, List<ActiveAgent>>>(emptyMap())
+    /** Each chat's working subagents, as the daemon last said. */
+    val agents: StateFlow<Map<String, List<ActiveAgent>>> = _agents
+
+    private val _usage = MutableStateFlow<UsageSnapshot?>(null)
+    /** Plan limits, account-wide, live. */
+    val usage: StateFlow<UsageSnapshot?> = _usage
+
+    private val viewedFile = File(dir, "viewed.json")
+    private val _viewed = MutableStateFlow(
+        runCatching { json.decodeFromString(kotlinx.serialization.builtins.MapSerializer(kotlinx.serialization.builtins.serializer<String>(), kotlinx.serialization.builtins.serializer<Long>()), viewedFile.readText()) }.getOrNull() ?: emptyMap(),
+    )
+    /** When each chat was last on screen here: newer activity is unread. */
+    val viewed: StateFlow<Map<String, Long>> = _viewed
+
+
     private val _sessions = MutableStateFlow(readCached(SESSIONS_FILE, ListSerializer(SessionInfo.serializer())) ?: emptyList())
     val sessions: StateFlow<List<SessionInfo>> = _sessions
 
@@ -80,6 +96,7 @@ class Store(
 
     private suspend fun onConnected() {
         runCatching { refreshSessions() }
+        runCatching { _usage.value = json.decodeFromJsonElement(UsageSnapshot.serializer(), gw.request("listRateLimits")!!) }
         for (id in open.toList()) runCatching { attach(id) }
         flushOutbox()
         if (feedWanted) runCatching { subscribeFeed() }
@@ -116,10 +133,35 @@ class Store(
                 deltaFor(sessionId).value += text
             }
             "sessions_changed" -> scope.launch { runCatching { refreshSessions() } }
+            "agents" -> {
+                val sessionId = message["sessionId"]?.jsonPrimitive?.contentOrNull ?: return
+                val list = runCatching { json.decodeFromJsonElement(ListSerializer(ActiveAgent.serializer()), message["agents"]!!) }.getOrNull() ?: return
+                _agents.value = _agents.value + (sessionId to list)
+            }
+            "rateLimits" -> runCatching { _usage.value = json.decodeFromJsonElement(UsageSnapshot.serializer(), message["usage"]!!) }
         }
     }
 
     // ---------------------------------------------------------------- chats
+
+    fun markViewed(sessionId: String) {
+        _viewed.value = _viewed.value + (sessionId to System.currentTimeMillis())
+        save("viewed.json", kotlinx.serialization.builtins.MapSerializer(kotlinx.serialization.builtins.serializer<String>(), kotlinx.serialization.builtins.serializer<Long>()), _viewed.value)
+    }
+
+    suspend fun rename(sessionId: String, title: String) {
+        gw.request("renameSession", mapOf("sessionId" to JsonPrimitive(sessionId), "title" to JsonPrimitive(title)))
+        refreshSessions()
+    }
+
+    suspend fun delete(sessionId: String) {
+        gw.request("deleteSession", mapOf("sessionId" to JsonPrimitive(sessionId)))
+        refreshSessions()
+    }
+
+    suspend fun stopAgent(sessionId: String, taskId: String) {
+        gw.request("stopAgent", mapOf("sessionId" to JsonPrimitive(sessionId), "taskId" to JsonPrimitive(taskId)))
+    }
 
     fun events(sessionId: String): StateFlow<List<JsonObject>> = flowFor(sessionId)
     fun streaming(sessionId: String): StateFlow<String> = deltaFor(sessionId)
@@ -149,11 +191,13 @@ class Store(
     /** A chat came on screen: attach, and stay attached across reconnects. */
     fun openChat(sessionId: String) {
         open.add(sessionId)
+        markViewed(sessionId)
         scope.launch { runCatching { attach(sessionId) } }
     }
 
     fun closeChat(sessionId: String) {
         open.remove(sessionId)
+        markViewed(sessionId)
         scope.launch { runCatching { gw.request("detach", mapOf("sessionId" to JsonPrimitive(sessionId))) } }
     }
 

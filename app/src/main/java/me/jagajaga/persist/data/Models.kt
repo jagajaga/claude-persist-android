@@ -178,3 +178,15 @@ data class LoginResult(val ok: Boolean, val error: String? = null, val configDir
 /** The app's newest release, as the server sees it. */
 @Serializable
 data class AppRelease(val tag: String, val version: String, val name: String, val size: Long, val path: String? = null)
+
+/** A subagent a chat has working (ActiveAgent in protocol.ts). */
+@Serializable
+data class ActiveAgent(val id: String, val description: String = "", val taskId: String? = null, val kind: String? = null)
+
+/** Plan usage, account-wide (UsageSnapshot in protocol.ts). */
+@Serializable
+data class UsageSnapshot(
+    val windows: Map<String, RateWindow> = emptyMap(),
+    val subscriptionType: String? = null,
+    val available: Boolean = true,
+)
