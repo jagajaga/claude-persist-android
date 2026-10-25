@@ -74,6 +74,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -143,6 +145,10 @@ fun ChatFrame(
         thread()
         val models by store.models.collectAsState()
         val allAgents by store.agents.collectAsState()
+        // Where this chat is working, refreshed when it opens and as each turn ends.
+        var places by remember(sessionId) { mutableStateOf<List<me.jagajaga.persist.data.WorkPlace>>(emptyList()) }
+        val turns = remember(events) { events.count { ThreadModel.isResult(it) } }
+        LaunchedEffect(sessionId, turns) { runCatching { store.workPlaces(sessionId) }.onSuccess { places = it } }
         var optionsOpen by remember { mutableStateOf(false) }
         var compactAsk by remember { mutableStateOf(false) }
         // One composer, following the chat in view; each chat keeps its own draft.
@@ -153,6 +159,7 @@ fun ChatFrame(
             filesDir = store.outgoingFilesDir,
             contextFill = remember(events) { ThreadModel.contextFill(events) },
             agents = allAgents[sessionId].orEmpty(),
+            places = places,
             onStopAgent = { taskId -> scope.launch { runCatching { store.stopAgent(sessionId, taskId) } } },
             onCompact = { compactAsk = true },
             onOptions = { optionsOpen = true },
@@ -287,7 +294,7 @@ fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
                     },
                 )
             }
-            if (streaming.isNotBlank()) item(key = "streaming") { MarkdownText(streaming) }
+            if (streaming.isNotBlank()) item(key = "streaming") { StreamingText(streaming) }
             if (session?.working == true) item(key = "working") {
                 WorkingRow(ThreadModel.turnStart(events), onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } })
             }
@@ -432,6 +439,41 @@ private fun WaitingBar(waiting: List<Pair<Int, ThreadItem>>, onShow: (Int) -> Un
     }
 }
 
+/** The panel's branch chip: "⎇ main", a worktree's name, or "⋔ 3"; tap for every place, the current one ticked. */
+@Composable
+private fun PlacesChip(places: List<me.jagajaga.persist.data.WorkPlace>) {
+    var open by remember { mutableStateOf(false) }
+    val one = places.singleOrNull()
+    val text = if (one != null) (if (one.worktree) "⋔ " else "⎇ ") + one.name else "⋔ ${places.size}"
+    Box {
+        Text(
+            text,
+            style = Type.tiny.copy(color = Palette.muted),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .widthIn(max = 110.dp)
+                .border(1.dp, Palette.border, RoundedCornerShape(50))
+                .clickable { open = true }
+                .padding(horizontal = 9.dp, vertical = 6.dp),
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            for (p in places) {
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text((if (p.current) "✓ " else "   ") + (if (p.worktree) "⋔ " else "⎇ ") + p.name, style = Type.small.copy(color = Palette.text))
+                            p.branch?.takeIf { it != p.name }?.let { Text("on $it", style = Type.tiny) }
+                            Text(p.path, style = Type.tiny, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    },
+                    onClick = { open = false },
+                )
+            }
+        }
+    }
+}
+
 /** The subagents working, as a count; tap for the list, each with a stop. */
 @Composable
 private fun AgentsChip(agents: List<me.jagajaga.persist.data.ActiveAgent>, onStop: (String) -> Unit) {
@@ -497,7 +539,7 @@ private fun UserBubble(item: ThreadItem.User) {
 
 @Composable
 private fun AssistantText(item: ThreadItem.Assistant) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.agentStripe(item.agent).padding(start = if (item.agent != null) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         item.agent?.let { AgentChip(it) }
         MarkdownText(item.text)
         MediaRow(remember(item.text) { Links.mediaIn(item.text) })
@@ -562,6 +604,14 @@ private fun DiffBlock(label: String, lines: List<DiffLine>) {
     }
 }
 
+/** A reply as it arrives, with the panel's blinking caret at its end. */
+@Composable
+private fun StreamingText(text: String) {
+    var on by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(530); on = !on } }
+    MarkdownText(text + if (on) " ▍" else "  ")
+}
+
 /** Previews of the pictures and videos a message names, one under another. */
 @Composable
 private fun MediaRow(media: List<String>, maxHeight: androidx.compose.ui.unit.Dp = 240.dp) {
@@ -573,16 +623,31 @@ private fun MediaRow(media: List<String>, maxHeight: androidx.compose.ui.unit.Dp
 
 @Composable
 private fun AgentChip(name: String) {
+    val color = agentColor(name)
     Text(
         name,
-        style = Type.tiny.copy(color = Palette.ok),
+        style = Type.tiny.copy(color = color),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier
-            .border(1.dp, Palette.ok, RoundedCornerShape(50))
+            .border(1.dp, color, RoundedCornerShape(50))
             .padding(horizontal = 10.dp, vertical = 3.dp),
     )
 }
+
+/** Each subagent its own colour, as the panel gives them: the same name always the same colour. */
+private val AGENT_COLORS = listOf(
+    Color(0xFF2E7D32), Color(0xFF6A1B9A), Color(0xFFC2185B), Color(0xFF00838F),
+    Color(0xFFEF6C00), Color(0xFF283593), Color(0xFF558B2F), Color(0xFF8D6E63),
+)
+
+internal fun agentColor(name: String): Color = AGENT_COLORS[Math.floorMod(name.hashCode(), AGENT_COLORS.size)]
+
+/** The coloured stripe down the left of a subagent's message or tool card. */
+private fun Modifier.agentStripe(agent: String?): Modifier =
+    if (agent == null) this else this.drawBehind {
+        drawRect(agentColor(agent), size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height))
+    }
 
 @Composable
 private fun Chip(text: String, onClick: (() -> Unit)? = null) {
@@ -607,8 +672,10 @@ private fun ToolCard(item: ThreadItem.Tool) {
     Column(
         Modifier
             .fillMaxWidth()
-            .border(1.dp, Palette.border, RoundedCornerShape(12.dp))
+            .border(1.dp, item.agent?.let { agentColor(it).copy(alpha = 0.6f) } ?: Palette.border, RoundedCornerShape(12.dp))
             .background(Palette.surface, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .agentStripe(item.agent)
             .clickable { open = !open }
             .padding(horizontal = 14.dp, vertical = 11.dp),
     ) {
@@ -818,6 +885,7 @@ private fun Composer(
     filesDir: java.io.File,
     contextFill: Double?,
     agents: List<me.jagajaga.persist.data.ActiveAgent>,
+    places: List<me.jagajaga.persist.data.WorkPlace>,
     onStopAgent: (String) -> Unit,
     onCompact: () -> Unit,
     onOptions: () -> Unit,
@@ -939,6 +1007,7 @@ private fun Composer(
                     .padding(horizontal = 12.dp, vertical = 7.dp),
             )
             contextFill?.let { Box(Modifier.clickable(onClick = onCompact).padding(4.dp)) { ContextRing(it) } }
+            if (places.isNotEmpty()) PlacesChip(places)
             // Everything after this sits at the right edge, as in the panel.
             Spacer(Modifier.weight(1f))
             if (agents.isNotEmpty()) AgentsChip(agents, onStopAgent)

@@ -190,3 +190,26 @@ data class UsageSnapshot(
     val subscriptionType: String? = null,
     val available: Boolean = true,
 )
+
+/** Where a chat is working (WorkPlace in gitBranch.ts): its checkout, or an agent worktree. */
+@Serializable
+data class WorkPlace(
+    val name: String,
+    val branch: String? = null,
+    val path: String = "",
+    val worktree: Boolean = false,
+    val current: Boolean = false,
+)
+
+@Serializable
+data class WorkPlaces(val places: List<WorkPlace> = emptyList())
+
+/** A Claude Code conversation on the server that can be brought in as a chat. */
+@Serializable
+data class ClaudeSessionCandidate(
+    val file: String,
+    val sdkSessionId: String = "",
+    val cwd: String = "",
+    val title: String = "",
+    val mtimeMs: Double = 0.0,
+)

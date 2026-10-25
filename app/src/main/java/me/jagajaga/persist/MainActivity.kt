@@ -8,6 +8,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,7 +88,24 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
         )
         val c = container
+        c.pendingOpen.value = intent?.getStringExtra(me.jagajaga.persist.notify.Notifications.EXTRA_CHAT)
+        if (c.settings.notify) me.jagajaga.persist.notify.NotifyService.start(this)
         setContent { PersistTheme { App(c) } }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(me.jagajaga.persist.notify.Notifications.EXTRA_CHAT)?.let { container.pendingOpen.value = it }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        me.jagajaga.persist.notify.AppVisibility.visible = true
+    }
+
+    override fun onStop() {
+        me.jagajaga.persist.notify.AppVisibility.visible = false
+        super.onStop()
     }
 
     override fun onResume() {
@@ -104,6 +122,15 @@ private fun App(c: Container) {
     val state by c.gateway.state.collectAsState()
     val outgoing by c.store.outgoing.collectAsState()
     val route = nav.currentBackStackEntryAsState().value?.destination?.route
+
+    // A tapped notification: straight to its chat.
+    val pending by c.pendingOpen.collectAsState()
+    LaunchedEffect(pending) {
+        pending?.let { id ->
+            nav.navigate("chat/$id") { launchSingleTop = true }
+            c.pendingOpen.value = null
+        }
+    }
 
     // An expired Authelia session takes you to its login, once, by itself.
     LaunchedEffect(state) {
@@ -149,6 +176,7 @@ private fun App(c: Container) {
                 }
             }
             composable("settings") { SettingsScreen(c, nav) }
+            composable("import") { ImportScreen(c, nav) }
         }
     }
     }
@@ -192,6 +220,11 @@ private fun MainTabs(c: Container, nav: NavHostController, banner: @Composable (
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(Tab.entries[tab].label, style = Type.title.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
+                if (Tab.entries[tab] == Tab.Chats) {
+                    IconButton(onClick = { nav.navigate("import") }) {
+                        Icon(androidx.compose.material.icons.Icons.Filled.Download, contentDescription = "Import a Claude Code session")
+                    }
+                }
                 IconButton(onClick = { nav.navigate("settings") }) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
             }
             banner()
@@ -243,7 +276,8 @@ private fun NewChat(c: Container, nav: NavHostController) {
             Text("New chat", style = Type.title.copy(fontWeight = FontWeight.SemiBold))
         }
         if (chosen == null) {
-            FilesScreen(c.store, startPath = homeGuess(c), pickFolder = { folder = it })
+            // Named after its folder to start with, as the panel does: "blooper2.0-".
+            FilesScreen(c.store, startPath = homeGuess(c), pickFolder = { folder = it; if (title.isBlank()) title = it.trimEnd('/').substringAfterLast('/') + "-" })
         } else {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("In $chosen", style = Type.small)
@@ -289,6 +323,7 @@ private fun SettingsScreen(c: Container, nav: NavHostController) {
             colors = ButtonDefaults.buttonColors(containerColor = Palette.accent),
         ) { Text("Save") }
         OutlinedButton(onClick = { nav.navigate("login") }) { Text("Log in again") }
+        NotifySection(c)
         UpdateSection(c)
         OutlinedButton(onClick = {
             CookieManager.getInstance().removeAllCookies(null)
@@ -365,5 +400,81 @@ private fun UpdateSection(c: Container) {
             }) { Text("Check for updates") }
         }
         status?.let { Text(it, style = Type.small) }
+    }
+}
+
+/** "Notify me": Claude waiting on you, and turns finishing, while the app is closed. */
+@Composable
+private fun NotifySection(c: Container) {
+    val context = LocalContext.current
+    var on by remember { mutableStateOf(c.settings.notify) }
+    fun apply(enable: Boolean) {
+        on = enable
+        c.settings.notify = enable
+        if (enable) me.jagajaga.persist.notify.NotifyService.start(context) else me.jagajaga.persist.notify.NotifyService.stop(context)
+    }
+    val ask = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted -> apply(granted) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Notify me", style = Type.body)
+            Text("When Claude needs you or finishes, even with the app closed", style = Type.tiny)
+        }
+        androidx.compose.material3.Switch(checked = on, onCheckedChange = { want ->
+            if (want && android.os.Build.VERSION.SDK_INT >= 33 &&
+                androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                apply(want)
+            }
+        })
+    }
+}
+
+/** Bring an existing Claude Code conversation on the server in as a chat, as the panel's Import does. */
+@Composable
+private fun ImportScreen(c: Container, nav: NavHostController) {
+    val scope = rememberCoroutineScope()
+    var list by remember { mutableStateOf<List<me.jagajaga.persist.data.ClaudeSessionCandidate>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        runCatching { c.store.claudeSessions() }.onSuccess { list = it.sortedByDescending { s -> s.mtimeMs } }.onFailure { error = it.message }
+    }
+    Column(Modifier.fillMaxSize().background(Palette.page)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+            Text("Import a Claude Code session", style = Type.title.copy(fontWeight = FontWeight.SemiBold))
+        }
+        error?.let { Text(it, style = Type.small.copy(color = Palette.error), modifier = Modifier.padding(16.dp)) }
+        val items = list
+        if (items == null && error == null) Text("Looking…", style = Type.small, modifier = Modifier.padding(16.dp))
+        if (items != null && items.isEmpty()) Text("No Claude Code sessions on the server", style = Type.small, modifier = Modifier.padding(16.dp))
+        androidx.compose.foundation.lazy.LazyColumn {
+            items(items.orEmpty().size) { i ->
+                val s = items!![i]
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Palette.surface)
+                        .clickable(enabled = !busy) {
+                            busy = true
+                            scope.launch {
+                                runCatching { c.store.importClaudeSession(s.file) }
+                                    .onSuccess { info -> nav.popBackStack(); nav.navigate("chat/${info.id}") }
+                                    .onFailure { error = it.message }
+                                busy = false
+                            }
+                        }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    Text(s.title.ifBlank { s.sdkSessionId }, style = Type.body, maxLines = 2)
+                    Text("${me.jagajaga.persist.ui.ago(s.mtimeMs.toLong())} · ${s.cwd}", style = Type.tiny, maxLines = 1)
+                }
+                androidx.compose.material3.HorizontalDivider(color = Palette.border)
+            }
+        }
     }
 }

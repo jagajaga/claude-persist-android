@@ -133,6 +133,8 @@ private fun SignInDialog(store: Store, onDone: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
+    // The panel's two choices: the account Claude Code itself uses here, or a new named one.
+    var useDefault by remember { mutableStateOf(true) }
     var code by remember { mutableStateOf("") }
     var loginId by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -143,7 +145,29 @@ private fun SignInDialog(store: Store, onDone: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (loginId == null) {
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name for this account") }, singleLine = true)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { useDefault = true }) {
+                        androidx.compose.material3.RadioButton(selected = useDefault, onClick = { useDefault = true })
+                        Column {
+                            Text("Default account", style = Type.body)
+                            Text("The one Claude Code itself uses on the server", style = Type.tiny)
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { useDefault = false }) {
+                        androidx.compose.material3.RadioButton(selected = !useDefault, onClick = { useDefault = false })
+                        Column {
+                            Text("New named account", style = Type.body)
+                            Text("A separate login under ~/.claude-accounts", style = Type.tiny)
+                        }
+                    }
+                    if (!useDefault) {
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it.lowercase() },
+                            label = { Text("Name, e.g. work") },
+                            singleLine = true,
+                            isError = name.isNotEmpty() && !Regex("^[a-z0-9-]+$").matches(name) || name == "default",
+                        )
+                    }
                 } else {
                     Text("Sign in on the page that opened, then paste the code it shows.", style = Type.small)
                     OutlinedTextField(value = code, onValueChange = { code = it }, label = { Text("Code") }, singleLine = true)
@@ -152,14 +176,15 @@ private fun SignInDialog(store: Store, onDone: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(enabled = !busy, onClick = {
+            val nameOk = useDefault || (Regex("^[a-z0-9-]+$").matches(name) && name != "default")
+            TextButton(enabled = !busy && (loginId != null || nameOk), onClick = {
                 busy = true
                 message = null
                 scope.launch {
                     runCatching {
                         val id = loginId
                         if (id == null) {
-                            val started = store.startLogin(name.trim().ifEmpty { "phone" })
+                            val started = store.startLogin(if (useDefault) "default" else name.trim())
                             loginId = started.loginId
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(started.url)))
                         } else {

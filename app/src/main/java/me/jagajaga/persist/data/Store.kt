@@ -78,6 +78,9 @@ class Store(
     /** Messages written here and not yet confirmed by the server. */
     val outgoing: StateFlow<List<OutgoingMessage>> = _outgoing
 
+    /** Chats whose attach the daemon has answered: from then on every event of theirs arrives. */
+    private val attached = ConcurrentHashMap.newKeySet<String>()
+
     /** Chats on screen right now; kept attached across reconnects. */
     private val open = ConcurrentHashMap.newKeySet<String>()
 
@@ -97,6 +100,8 @@ class Store(
     // ---------------------------------------------------------------- sync
 
     private suspend fun onConnected() {
+        // A new connection carries no attachments until each chat re-attaches.
+        attached.clear()
         runCatching { refreshSessions() }
         runCatching { _usage.value = json.decodeFromJsonElement(UsageSnapshot.serializer(), gw.request("listRateLimits")!!) }
         for (id in open.toList()) runCatching { attach(id) }
@@ -116,7 +121,10 @@ class Store(
             "event" -> {
                 val sessionId = message["sessionId"]?.jsonPrimitive?.contentOrNull ?: return
                 val event = message["event"] as? JsonObject ?: return
-                if (logFor(sessionId).merge(listOf(event))) publish(sessionId)
+                _incoming.tryEmit(sessionId to event)
+                // A chat not on screen hears only the feed's share of its events;
+                // merging those would leave holes that the next replay skips over.
+                if (logFor(sessionId).mergeLive(event, attached = sessionId in attached)) publish(sessionId)
                 val type = typeOf(event)
                 if (type == "assistant_text") deltaFor(sessionId).value = ""
                 if (type == "user_message") {
@@ -199,6 +207,7 @@ class Store(
 
     fun closeChat(sessionId: String) {
         open.remove(sessionId)
+        attached.remove(sessionId)
         markViewed(sessionId)
         scope.launch { runCatching { gw.request("detach", mapOf("sessionId" to JsonPrimitive(sessionId))) } }
     }
@@ -213,13 +222,14 @@ class Store(
                 "limit" to JsonPrimitive(REPLAY_LIMIT),
             ),
         ) ?: return
-        val attached = json.decodeFromJsonElement(AttachResult.serializer(), result)
-        if (log.applyReplay(attached.events, skippedSome = attached.hasEarlier)) publish(sessionId)
-        attached.info?.let { info ->
+        val reply = json.decodeFromJsonElement(AttachResult.serializer(), result)
+        if (log.applyReplay(reply.events, skippedSome = reply.hasEarlier)) publish(sessionId)
+        if (sessionId in open) attached.add(sessionId)
+        reply.info?.let { info ->
             _sessions.value = _sessions.value.map { if (it.id == info.id) info else it }
         }
         // Anything the server now holds needs no resending.
-        attached.events.mapNotNull { clientIdOf(it) }.forEach { confirmSent(it) }
+        reply.events.mapNotNull { clientIdOf(it) }.forEach { confirmSent(it) }
     }
 
     suspend fun createSession(cwd: String, title: String?): SessionInfo {
@@ -409,9 +419,38 @@ class Store(
 
     // ---------------------------------------------------------------- feed, files, stats
 
+    /**
+     * The feed is wanted by its screen and, when it runs, by the background
+     * notifier: counted, so leaving the feed screen doesn't turn it off under
+     * the notifier.
+     */
     fun wantFeed(wanted: Boolean) {
-        feedWanted = wanted
-        if (wanted) scope.launch { runCatching { subscribeFeed() } }
+        val users = if (wanted) feedUsers.incrementAndGet() else feedUsers.decrementAndGet().coerceAtLeast(0)
+        if (users == 0) feedUsers.set(0)
+        val was = feedWanted
+        feedWanted = users > 0
+        if (feedWanted && !was) scope.launch { runCatching { subscribeFeed() } }
+    }
+
+    private val feedUsers = java.util.concurrent.atomic.AtomicInteger(0)
+
+    private val _incoming = kotlinx.coroutines.flow.MutableSharedFlow<Pair<String, JsonObject>>(extraBufferCapacity = 128)
+    /** Every event from every chat this app hears, as it arrives: what notifications are made from. */
+    val incoming: kotlinx.coroutines.flow.SharedFlow<Pair<String, JsonObject>> = _incoming
+
+    /** Chats on screen right now, so a notification isn't raised for what you are looking at. */
+    fun isOpen(sessionId: String): Boolean = sessionId in open
+
+    suspend fun workPlaces(sessionId: String): List<WorkPlace> =
+        json.decodeFromJsonElement(WorkPlaces.serializer(), gw.request("workPlaces", mapOf("sessionId" to JsonPrimitive(sessionId)))!!).places
+
+    suspend fun claudeSessions(): List<ClaudeSessionCandidate> =
+        json.decodeFromJsonElement(ListSerializer(ClaudeSessionCandidate.serializer()), gw.request("listClaudeSessions", timeoutMs = 30_000)!!)
+
+    suspend fun importClaudeSession(file: String): SessionInfo {
+        val info = json.decodeFromJsonElement(SessionInfo.serializer(), gw.request("importClaudeSession", mapOf("file" to JsonPrimitive(file)), timeoutMs = 60_000)!!)
+        refreshSessions()
+        return info
     }
 
     private suspend fun subscribeFeed() {

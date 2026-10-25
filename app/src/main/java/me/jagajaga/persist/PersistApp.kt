@@ -29,6 +29,11 @@ class Settings(context: Context) {
     val wsUrl: String
         get() = baseUrl.replaceFirst(Regex("^http"), "ws") + "/proxy/$gatewayPort/ws"
 
+    /** Follow the chats in the background and notify (see NotifyService). */
+    var notify: Boolean
+        get() = prefs.getBoolean("notify", false)
+        set(value) = prefs.edit().putBoolean("notify", value).apply()
+
     /** The gateway over plain HTTP, through the same proxy and login. */
     val httpBase: String get() = "$baseUrl/proxy/$gatewayPort"
 
@@ -54,6 +59,9 @@ class Container(context: Context) {
     )
 
     val store = Store(gateway, File(context.filesDir, "persist"), scope)
+
+    /** A chat a tapped notification asked for, until the UI has opened it. */
+    val pendingOpen = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
     val downloads = me.jagajaga.persist.net.Downloads(cookie = { CookieManager.getInstance().getCookie(settings.baseUrl) })
 

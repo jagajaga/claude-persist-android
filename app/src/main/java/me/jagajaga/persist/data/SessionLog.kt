@@ -67,6 +67,19 @@ class SessionLog(initial: List<JsonObject> = emptyList()) {
         return merge(incoming)
     }
 
+    /**
+     * One event pushed live. An attached chat gets every event, so any is
+     * kept. An unattached one only hears the feed's selection, so an event is
+     * kept only when it follows straight on from what is held: anything else
+     * would leave a gap that the next replay -- resuming after the newest held
+     * -- would never fill.
+     */
+    fun mergeLive(event: JsonObject, attached: Boolean): Boolean {
+        if (attached) return merge(listOf(event))
+        val seq = seqOf(event) ?: return false
+        return if (bySeq.isNotEmpty() && seq == lastSeq + 1) merge(listOf(event)) else false
+    }
+
     /** Older events exist on the server: sequence numbers start at 0. */
     val hasEarlier: Boolean get() = firstSeq > 0
 

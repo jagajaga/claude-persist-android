@@ -117,4 +117,19 @@ class SessionLogTest {
         assertEquals(listOf(7, 8, 9), log.newest(3).map { it["seq"]!!.jsonPrimitive.content.toInt() })
         assertEquals(10, log.events.size)
     }
+
+    /** The feed carries only some of a closed chat's events; keeping them would hide the rest. */
+    @Test
+    fun `a feed event for a closed chat is kept only if it follows straight on`() {
+        val log = SessionLog((0..9).map { ev(it) })
+        assertTrue(log.mergeLive(ev(10), attached = false))
+        assertFalse("a gap would never be filled", log.mergeLive(ev(25), attached = false))
+        assertEquals((0..10).toList(), log.seqs())
+        assertTrue("an open chat takes everything", log.mergeLive(ev(25), attached = true))
+    }
+
+    @Test
+    fun `a closed chat with nothing cached takes nothing from the feed`() {
+        assertFalse(SessionLog().mergeLive(ev(500), attached = false))
+    }
 }

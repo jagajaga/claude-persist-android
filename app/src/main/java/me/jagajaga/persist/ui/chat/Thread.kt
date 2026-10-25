@@ -281,6 +281,8 @@ object ThreadModel {
         return out.toList()
     }
 
+    fun isResult(stored: JsonObject): Boolean = (stored["event"] as? JsonObject)?.str("type") == "result"
+
     /** The newest thing you asked, for the prompt bar at the top. */
     fun lastPrompt(items: List<ThreadItem>): String? =
         items.lastOrNull { it is ThreadItem.User && it.text.isNotBlank() }?.let { (it as ThreadItem.User).text }
