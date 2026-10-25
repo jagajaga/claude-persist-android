@@ -68,6 +68,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.key
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -105,8 +107,13 @@ import me.jagajaga.persist.ui.clock
 import me.jagajaga.persist.ui.markdown.MarkdownText
 import java.io.ByteArrayOutputStream
 
+/**
+ * What stays put while you swipe between chats: the title bar, the strip of
+ * chats and the composer, all for whichever chat is in view. Only [thread] --
+ * the conversation itself -- moves under the finger.
+ */
 @Composable
-fun ChatScreen(
+fun ChatFrame(
     store: Store,
     sessionId: String,
     onBack: () -> Unit,
@@ -114,18 +121,11 @@ fun ChatScreen(
     strip: List<SessionInfo>,
     onSelect: (String) -> Unit,
     banner: @Composable () -> Unit,
+    thread: @Composable ColumnScope.() -> Unit,
 ) {
-    DisposableEffect(sessionId) {
-        store.openChat(sessionId)
-        onDispose { store.closeChat(sessionId) }
-    }
     val sessions by store.sessions.collectAsState()
     val session = sessions.firstOrNull { it.id == sessionId }
     val events by store.events(sessionId).collectAsState()
-    val outgoing by store.outgoing.collectAsState()
-    val streaming by store.streaming(sessionId).collectAsState()
-    val mine = remember(outgoing, sessionId) { outgoing.filter { it.sessionId == sessionId } }
-    val items = remember(events, mine) { ThreadModel.build(events, mine) }
     val scope = rememberCoroutineScope()
 
     Column(
@@ -140,7 +140,57 @@ fun ChatScreen(
         val live = remember(sessions) { sessions.associateBy { it.id } }
         if (strip.size > 1) ChatStrip(strip.map { live[it.id] ?: it }, sessionId, onSelect)
         banner()
+        thread()
+        val models by store.models.collectAsState()
+        val allAgents by store.agents.collectAsState()
+        var optionsOpen by remember { mutableStateOf(false) }
+        var compactAsk by remember { mutableStateOf(false) }
+        // One composer, following the chat in view; each chat keeps its own draft.
+        key(sessionId) { Composer(
+            session,
+            draftKey = sessionId,
+            pill = session?.let { Options.pill(it.model, it.activeModel, it.effort, models) } ?: "Default",
+            filesDir = store.outgoingFilesDir,
+            contextFill = remember(events) { ThreadModel.contextFill(events) },
+            agents = allAgents[sessionId].orEmpty(),
+            onStopAgent = { taskId -> scope.launch { runCatching { store.stopAgent(sessionId, taskId) } } },
+            onCompact = { compactAsk = true },
+            onOptions = { optionsOpen = true },
+            onToggleBypass = {
+                val bypass = session?.permissionMode == "bypassPermissions"
+                scope.launch { runCatching { store.setPermissionMode(sessionId, if (bypass) "default" else "bypassPermissions") } }
+            },
+        ) { text, images, files -> store.send(sessionId, text, images, files) } }
+        if (optionsOpen && session != null) OptionsSheet(store, session) { optionsOpen = false }
+        if (compactAsk) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { compactAsk = false },
+                title = { Text("Compact this conversation?") },
+                text = { Text("Claude summarises the conversation so far to free context. It runs as the next turn.", style = Type.body) },
+                confirmButton = { androidx.compose.material3.TextButton(onClick = { compactAsk = false; store.send(sessionId, "/compact") }) { Text("Compact") } },
+                dismissButton = { androidx.compose.material3.TextButton(onClick = { compactAsk = false }) { Text("Cancel") } },
+            )
+        }
+    }
+}
 
+/** One chat's conversation: the part a sideways swipe moves. */
+@Composable
+fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
+    DisposableEffect(sessionId) {
+        store.openChat(sessionId)
+        onDispose { store.closeChat(sessionId) }
+    }
+    val sessions by store.sessions.collectAsState()
+    val session = sessions.firstOrNull { it.id == sessionId }
+    val events by store.events(sessionId).collectAsState()
+    val outgoing by store.outgoing.collectAsState()
+    val streaming by store.streaming(sessionId).collectAsState()
+    val mine = remember(outgoing, sessionId) { outgoing.filter { it.sessionId == sessionId } }
+    val items = remember(events, mine) { ThreadModel.build(events, mine) }
+    val scope = rememberCoroutineScope()
+
+    Column(modifier) {
         val listState = rememberLazyListState()
         val hasEarlier = (events.firstOrNull()?.let { SessionLog.seqOf(it) } ?: 0) > 0
         var loadingEarlier by remember(sessionId) { mutableStateOf(false) }
@@ -188,13 +238,17 @@ fun ChatScreen(
         LaunchedEffect(items.size, streaming.length, session?.working) {
             if (landed && pinned) toBottom()
         }
-        // The keyboard opening shrinks the list from below; scroll by as much,
-        // so what was at the bottom stays just above the input, as in the
-        // panel. Closing it does the same the other way.
+        // The keyboard opening or closing resizes the list from below. At the
+        // bottom, stay at the bottom: the newest line, the working row with its
+        // Stop, sits just above the input either way. (Scrolling back by the
+        // height the keyboard gave up hid exactly that row.) Reading further
+        // up, keep the same lines on screen instead.
         LaunchedEffect(listState) {
             var last = 0
             snapshotFlow { listState.layoutInfo.viewportSize.height }.collect { height ->
-                if (last != 0 && height != last && landed) listState.scrollBy((last - height).toFloat())
+                if (last != 0 && height != last && landed) {
+                    if (pinned) toBottom() else if (height < last) listState.scrollBy((last - height).toFloat())
+                }
                 last = height
             }
         }
@@ -238,34 +292,6 @@ fun ChatScreen(
         // Waiting on you: pinned above the input so it is never scrolled past.
         val waiting = remember(items) { ThreadModel.waiting(items) }
         if (waiting.isNotEmpty()) WaitingBar(waiting) { index -> pinned = false; scope.launch { listState.animateScrollToItem(index + headerRows) } }
-        val models by store.models.collectAsState()
-        val allAgents by store.agents.collectAsState()
-        var optionsOpen by remember { mutableStateOf(false) }
-        var compactAsk by remember { mutableStateOf(false) }
-        Composer(
-            session,
-            pill = session?.let { Options.pill(it.model, it.activeModel, it.effort, models) } ?: "Default",
-            filesDir = store.outgoingFilesDir,
-            contextFill = remember(events) { ThreadModel.contextFill(events) },
-            agents = allAgents[sessionId].orEmpty(),
-            onStopAgent = { taskId -> scope.launch { runCatching { store.stopAgent(sessionId, taskId) } } },
-            onCompact = { compactAsk = true },
-            onOptions = { optionsOpen = true },
-            onToggleBypass = {
-                val bypass = session?.permissionMode == "bypassPermissions"
-                scope.launch { runCatching { store.setPermissionMode(sessionId, if (bypass) "default" else "bypassPermissions") } }
-            },
-        ) { text, images, files -> store.send(sessionId, text, images, files) }
-        if (optionsOpen && session != null) OptionsSheet(store, session) { optionsOpen = false }
-        if (compactAsk) {
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { compactAsk = false },
-                title = { Text("Compact this conversation?") },
-                text = { Text("Claude summarises the conversation so far to free context. It runs as the next turn.", style = Type.body) },
-                confirmButton = { androidx.compose.material3.TextButton(onClick = { compactAsk = false; store.send(sessionId, "/compact") }) { Text("Compact") } },
-                dismissButton = { androidx.compose.material3.TextButton(onClick = { compactAsk = false }) { Text("Cancel") } },
-            )
-        }
     }
 }
 
@@ -783,6 +809,7 @@ private fun WorkingRow(startedAt: Long?, onStop: () -> Unit) {
 @Composable
 private fun Composer(
     session: SessionInfo?,
+    draftKey: String,
     pill: String,
     filesDir: java.io.File,
     contextFill: Double?,
@@ -793,7 +820,9 @@ private fun Composer(
     onToggleBypass: () -> Unit,
     onSend: (String, List<OutgoingImage>, List<OutgoingFile>) -> Unit,
 ) {
-    val textState = rememberTextFieldState()
+    // Each chat keeps what you had typed into it, across swipes to other chats.
+    val textState = rememberTextFieldState(Drafts.get(draftKey))
+    DisposableEffect(draftKey) { onDispose { Drafts.put(draftKey, textState.text.toString()) } }
     val text = textState.text.toString()
     val images = remember { mutableStateListOf<OutgoingImage>() }
     val files = remember { mutableStateListOf<OutgoingFile>() }
@@ -909,23 +938,27 @@ private fun Composer(
             // Everything after this sits at the right edge, as in the panel.
             Spacer(Modifier.weight(1f))
             if (agents.isNotEmpty()) AgentsChip(agents, onStopAgent)
+            // Bypass permissions: the panel's shield, as an icon only, filled when on.
             val bypass = session?.permissionMode == "bypassPermissions"
-            Row(
+            Box(
                 Modifier
-                    .background(if (bypass) Palette.warn else Palette.surface, RoundedCornerShape(50))
-                    .border(1.dp, if (bypass) Palette.warn else Palette.border, RoundedCornerShape(50))
-                    .clickable(enabled = session != null, onClick = onToggleBypass)
-                    .padding(horizontal = 10.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .size(40.dp)
+                    .background(if (bypass) Palette.warn else Palette.surface, CircleShape)
+                    .border(1.dp, if (bypass) Palette.warn else Palette.border, CircleShape)
+                    .clickable(enabled = session != null, onClick = onToggleBypass),
+                contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Filled.Shield, contentDescription = null, tint = if (bypass) Color.White else Palette.muted, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Bypass", style = Type.small.copy(color = if (bypass) Color.White else Palette.muted))
+                Icon(
+                    Icons.Filled.Shield,
+                    contentDescription = if (bypass) "Bypass permissions: on" else "Bypass permissions: off",
+                    tint = if (bypass) Color.White else Palette.muted,
+                    modifier = Modifier.size(20.dp),
+                )
             }
             val canSend = text.isNotBlank() || images.isNotEmpty() || files.isNotEmpty()
             Box(
                 Modifier
-                    .size(42.dp)
+                    .size(52.dp)
                     .background(if (canSend) Palette.accent else Palette.border, CircleShape)
                     .clickable(enabled = canSend) {
                         onSend(text.trim(), images.toList(), files.toList())
@@ -934,7 +967,7 @@ private fun Composer(
                         files.clear()
                     },
                 contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Filled.ArrowUpward, contentDescription = "Send", tint = Color.White) }
+            ) { Icon(Icons.Filled.ArrowUpward, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(28.dp)) }
         }
     }
 }

@@ -2,7 +2,10 @@ package me.jagajaga.persist.ui.chat
 
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -27,14 +30,24 @@ fun ChatPager(store: Store, startId: String, onBack: () -> Unit, banner: @Compos
     val scope = rememberCoroutineScope()
     // The order arriving late must not leave a different chat on screen.
     LaunchedEffect(order != null) { ids.indexOf(startId).takeIf { it >= 0 }?.let { pager.scrollToPage(it) } }
-    HorizontalPager(state = pager, key = { ids[it] }, beyondViewportPageCount = 0) { page ->
-        ChatScreen(
-            store,
-            ids[page],
-            onBack = onBack,
-            strip = order ?: emptyList(),
-            onSelect = { id -> ids.indexOf(id).takeIf { it >= 0 }?.let { scope.launch { pager.animateScrollToPage(it) } } },
-            banner = banner,
-        )
+    // Only the conversation sits in the pager: the title bar, the strip and
+    // the composer stay where they are and follow the chat in view.
+    val current = ids.getOrElse(pager.currentPage) { startId }
+    ChatFrame(
+        store,
+        current,
+        onBack = onBack,
+        strip = order ?: emptyList(),
+        onSelect = { id -> ids.indexOf(id).takeIf { it >= 0 }?.let { scope.launch { pager.animateScrollToPage(it) } } },
+        banner = banner,
+    ) {
+        HorizontalPager(
+            state = pager,
+            key = { ids[it] },
+            beyondViewportPageCount = 0,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        ) { page ->
+            ChatThread(store, ids[page], Modifier.fillMaxSize())
+        }
     }
 }
