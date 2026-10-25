@@ -64,4 +64,11 @@ class OptionsTest {
         assertEquals("5h 43% · 7d 21%", Options.usageLine(windows))
         assertNull(Options.usageLine(emptyMap()))
     }
+
+    @Test
+    fun `the top bar's Claude reading is the window nearest its limit`() {
+        val windows = mapOf("five_hour" to RateWindow(42.0), "seven_day" to RateWindow(77.0))
+        assertEquals("7d" to 77.0, Options.nearest(windows))
+        assertNull(Options.nearest(emptyMap()))
+    }
 }

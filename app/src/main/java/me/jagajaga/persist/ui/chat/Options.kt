@@ -61,6 +61,11 @@ object Options {
         return if (account.active) label else "$label · ${age(reading.at, now)}"
     }
 
+    /** The window nearest its limit, as kind label and percent: what the top bar shows. */
+    fun nearest(windows: Map<String, me.jagajaga.persist.data.RateWindow>): Pair<String, Double>? =
+        WINDOW_ORDER.mapNotNull { kind -> windows[kind]?.utilization?.let { (WINDOW_LABELS[kind] ?: kind) to it } }
+            .maxByOrNull { it.second }
+
     /** "5h 42% · 7d 21%": every window with a reading, as the panel's status bar tooltip lists them. */
     fun usageLine(windows: Map<String, me.jagajaga.persist.data.RateWindow>): String? =
         WINDOW_ORDER.mapNotNull { kind -> windows[kind]?.utilization?.let { "${WINDOW_LABELS[kind]} ${it.roundToInt()}%" } }

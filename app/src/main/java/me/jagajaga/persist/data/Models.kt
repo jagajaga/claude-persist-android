@@ -87,8 +87,13 @@ data class ServerStats(
     val disk: Disk? = null,
     val uptimeSeconds: Double = 0.0,
     val processes: Int? = null,
+    /** Download and upload, bytes per second; null until the server has two readings. */
+    val network: Network? = null,
     val sampledAt: Long = 0,
 )
+
+@Serializable
+data class Network(val rxBytesPerSec: Double = 0.0, val txBytesPerSec: Double = 0.0)
 
 /** One process on the server (ProcInfo in daemon/src/processes.ts). */
 @Serializable
