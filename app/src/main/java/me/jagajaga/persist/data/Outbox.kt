@@ -15,11 +15,27 @@ data class OutgoingMessage(
     val createdAt: Long,
     /** Attached images, base64, with their media types. */
     val images: List<OutgoingImage> = emptyList(),
+    /** Any other file: copied into the app's storage, uploaded before the message is sent. */
+    val files: List<OutgoingFile> = emptyList(),
     val attempts: Int = 0,
 )
 
 @Serializable
 data class OutgoingImage(val name: String, val mediaType: String, val base64: String)
+
+/**
+ * A file waiting to go. [localPath] is the app's own copy, so the original
+ * can move or vanish; [uploadedPath] is set, and saved, once the server holds
+ * it -- so a send that dies after the upload never uploads it again.
+ */
+@Serializable
+data class OutgoingFile(
+    val name: String,
+    val localPath: String,
+    val size: Long,
+    val uploadId: String,
+    val uploadedPath: String? = null,
+)
 
 /**
  * Messages are written here first and sent from here, never sent directly.
@@ -54,13 +70,19 @@ class Outbox(private val file: File, private val now: () -> Long = System::curre
 
     /** Write a new message; it is on disk before this returns. */
     @Synchronized
-    fun add(sessionId: String, text: String, images: List<OutgoingImage> = emptyList()): OutgoingMessage {
+    fun add(
+        sessionId: String,
+        text: String,
+        images: List<OutgoingImage> = emptyList(),
+        files: List<OutgoingFile> = emptyList(),
+    ): OutgoingMessage {
         val message = OutgoingMessage(
             clientMessageId = "phone-" + UUID.randomUUID().toString(),
             sessionId = sessionId,
             text = text,
             createdAt = now(),
             images = images,
+            files = files,
         )
         items[message.clientMessageId] = message
         persist()
@@ -70,7 +92,18 @@ class Outbox(private val file: File, private val now: () -> Long = System::curre
     /** The server has it, as new or as a duplicate; either way it is done. */
     @Synchronized
     fun confirm(clientMessageId: String) {
-        if (items.remove(clientMessageId) != null) persist()
+        val done = items.remove(clientMessageId) ?: return
+        persist()
+        // The server has its own copy of every file now.
+        done.files.forEach { runCatching { File(it.localPath).delete() } }
+    }
+
+    /** A file of this message is on the server now, at [path]. */
+    @Synchronized
+    fun fileUploaded(clientMessageId: String, uploadId: String, path: String) {
+        val item = items[clientMessageId] ?: return
+        items[clientMessageId] = item.copy(files = item.files.map { if (it.uploadId == uploadId) it.copy(uploadedPath = path) else it })
+        persist()
     }
 
     /** One more try made; kept for showing "retrying" and for diagnosis. */

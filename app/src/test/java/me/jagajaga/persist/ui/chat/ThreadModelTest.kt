@@ -120,4 +120,10 @@ class ThreadModelTest {
         )
         assertEquals("second", ThreadModel.lastPrompt(items))
     }
+
+    @Test
+    fun `an uploaded file shows the name that was picked`() {
+        assertEquals("report.pdf", attachmentName("/home/me/.claude-persist/uploads/s1/0f8e2b1a-1c2d-4e5f-8a9b-0123456789ab-report.pdf"))
+        assertEquals("notes.txt", attachmentName("/w/project/notes.txt"))
+    }
 }

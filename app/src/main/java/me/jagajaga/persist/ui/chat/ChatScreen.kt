@@ -43,6 +43,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -65,7 +67,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import me.jagajaga.persist.data.OutgoingFile
 import me.jagajaga.persist.data.OutgoingImage
 import me.jagajaga.persist.data.SessionInfo
 import me.jagajaga.persist.data.SessionLog
@@ -173,7 +178,15 @@ fun ChatScreen(
             if (streaming.isNotBlank()) item(key = "streaming") { MarkdownText(streaming) }
             if (session?.working == true) item(key = "working") { WorkingRow(onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } }) }
         }
-        Composer(session) { text, images -> store.send(sessionId, text, images) }
+        val models by store.models.collectAsState()
+        var optionsOpen by remember { mutableStateOf(false) }
+        Composer(
+            session,
+            pill = session?.let { Options.pill(it.model, it.activeModel, it.effort, models) } ?: "Default",
+            filesDir = store.outgoingFilesDir,
+            onOptions = { optionsOpen = true },
+        ) { text, images, files -> store.send(sessionId, text, images, files) }
+        if (optionsOpen && session != null) OptionsSheet(store, session) { optionsOpen = false }
     }
 }
 
@@ -459,12 +472,31 @@ private fun WorkingRow(onStop: () -> Unit) {
 
 /** The panel's composer: a rounded box with + and the model pill, and the blue send button. */
 @Composable
-private fun Composer(session: SessionInfo?, onSend: (String, List<OutgoingImage>) -> Unit) {
+private fun Composer(
+    session: SessionInfo?,
+    pill: String,
+    filesDir: java.io.File,
+    onOptions: () -> Unit,
+    onSend: (String, List<OutgoingImage>, List<OutgoingFile>) -> Unit,
+) {
     var text by remember { mutableStateOf("") }
     val images = remember { mutableStateListOf<OutgoingImage>() }
+    val files = remember { mutableStateListOf<OutgoingFile>() }
+    var attachMenu by remember { mutableStateOf(false) }
+    var attachError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
         uris.forEach { uri -> encodeImage(context, uri)?.let { images += it } }
+    }
+    // Any file at all; copied off the main thread, since it may be large.
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        scope.launch {
+            for (uri in uris) {
+                val copied = withContext(Dispatchers.IO) { copyForUpload(context, uri, filesDir) }
+                copied.onSuccess { files += it }.onFailure { attachError = it.message }
+            }
+        }
     }
     Column(
         Modifier
@@ -474,8 +506,20 @@ private fun Composer(session: SessionInfo?, onSend: (String, List<OutgoingImage>
             .background(Palette.surface, RoundedCornerShape(16.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
-        if (images.isNotEmpty()) {
+        attachError?.let { Text(it, style = Type.tiny.copy(color = Palette.error), modifier = Modifier.padding(bottom = 4.dp)) }
+        if (images.isNotEmpty() || files.isNotEmpty()) {
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                files.toList().forEach { file ->
+                    Row(
+                        Modifier.background(Palette.codeBg, RoundedCornerShape(50)).padding(start = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("▤ ${file.name}", style = Type.tiny.copy(color = Palette.text), maxLines = 1)
+                        Box(Modifier.size(32.dp).clickable { files.remove(file); java.io.File(file.localPath).delete() }, contentAlignment = Alignment.Center) {
+                            Text("×", style = Type.body)
+                        }
+                    }
+                }
                 images.toList().forEach { image ->
                     Row(
                         Modifier.background(Palette.codeBg, RoundedCornerShape(50)).padding(start = 10.dp),
@@ -502,39 +546,81 @@ private fun Composer(session: SessionInfo?, onSend: (String, List<OutgoingImage>
         }
         Spacer(Modifier.size(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .border(1.dp, Palette.border, RoundedCornerShape(10.dp))
-                    .clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                contentAlignment = Alignment.Center,
-            ) { Text("+", style = Type.title) }
+            Box {
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .border(1.dp, Palette.border, RoundedCornerShape(10.dp))
+                        .clickable { attachMenu = true },
+                    contentAlignment = Alignment.Center,
+                ) { Text("+", style = Type.title) }
+                DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
+                    DropdownMenuItem(text = { Text("Photo") }, onClick = {
+                        attachMenu = false
+                        picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    })
+                    DropdownMenuItem(text = { Text("File") }, onClick = {
+                        attachMenu = false
+                        attachError = null
+                        filePicker.launch(arrayOf("*/*"))
+                    })
+                }
+            }
             Text(
-                session?.activeModel ?: session?.model ?: "Default",
+                pill,
                 style = Type.small.copy(color = Palette.text),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f, fill = false)
                     .border(1.dp, Palette.border, RoundedCornerShape(50))
+                    .clickable(enabled = session != null, onClick = onOptions)
                     .padding(horizontal = 12.dp, vertical = 7.dp),
             )
             Spacer(Modifier.weight(1f))
-            val canSend = text.isNotBlank() || images.isNotEmpty()
+            val canSend = text.isNotBlank() || images.isNotEmpty() || files.isNotEmpty()
             Box(
                 Modifier
                     .size(42.dp)
                     .background(if (canSend) Palette.accent else Palette.border, CircleShape)
                     .clickable(enabled = canSend) {
-                        onSend(text.trim(), images.toList())
+                        onSend(text.trim(), images.toList(), files.toList())
                         text = ""
                         images.clear()
+                        files.clear()
                     },
                 contentAlignment = Alignment.Center,
             ) { Icon(Icons.Filled.ArrowUpward, contentDescription = "Send", tint = Color.White) }
         }
     }
 }
+
+/**
+ * A picked file, copied into the app's own storage so the send does not
+ * depend on the original staying where it is. Refused over the server's limit.
+ */
+private fun copyForUpload(context: android.content.Context, uri: Uri, dir: java.io.File): Result<OutgoingFile> = runCatching {
+    val resolver = context.contentResolver
+    var name = "file"
+    var size = -1L
+    resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE), null, null, null)?.use { c ->
+        if (c.moveToFirst()) {
+            c.getString(0)?.let { name = it }
+            if (!c.isNull(1)) size = c.getLong(1)
+        }
+    }
+    if (size > MAX_UPLOAD_BYTES) error("$name is over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB")
+    val id = java.util.UUID.randomUUID().toString()
+    val target = java.io.File(dir, "$id-${name.replace('/', '_')}")
+    resolver.openInputStream(uri)!!.use { input -> target.outputStream().use { input.copyTo(it) } }
+    if (target.length() > MAX_UPLOAD_BYTES) {
+        target.delete()
+        error("$name is over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB")
+    }
+    OutgoingFile(name = name, localPath = target.path, size = target.length(), uploadId = id)
+}
+
+private const val MAX_UPLOAD_BYTES = 200L * 1024 * 1024
 
 /**
  * A picked image as an attachment, shrunk if it is big.

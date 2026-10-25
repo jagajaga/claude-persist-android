@@ -89,8 +89,9 @@ object ThreadModel {
             when (event.str("type")) {
                 "user_message" -> {
                     event.str("clientMessageId")?.let { delivered += it }
+                    // A file's label is its path on the server; its name is what you picked.
                     val images = (event["attachments"] as? JsonArray).orEmpty()
-                        .mapNotNull { (it as? JsonObject)?.str("label") }
+                        .mapNotNull { (it as? JsonObject)?.str("label")?.let(::attachmentName) }
                     items += ThreadItem.User(key, event.str("text") ?: "", images, sending = false)
                 }
                 "assistant_text" -> items += ThreadItem.Assistant(key, event.str("text") ?: "", agent)
@@ -163,7 +164,7 @@ object ThreadModel {
         // Written on this phone, not yet confirmed: shown in place, marked as sending.
         for (message in outgoing) {
             if (message.clientMessageId in delivered) continue
-            items += ThreadItem.User("o${message.clientMessageId}", message.text, message.images.map { it.name }, sending = true)
+            items += ThreadItem.User("o${message.clientMessageId}", message.text, message.images.map { it.name } + message.files.map { it.name }, sending = true)
         }
         return items
     }
@@ -187,5 +188,9 @@ object ThreadModel {
     fun lastPrompt(items: List<ThreadItem>): String? =
         items.lastOrNull { it is ThreadItem.User && it.text.isNotBlank() }?.let { (it as ThreadItem.User).text }
 }
+
+/** "/…/uploads/<chat>/<uuid>-report.pdf" -> "report.pdf". */
+internal fun attachmentName(label: String): String =
+    label.substringAfterLast('/').replace(Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-"), "")
 
 private fun JsonArray?.orEmpty(): List<JsonElement> = this ?: emptyList()

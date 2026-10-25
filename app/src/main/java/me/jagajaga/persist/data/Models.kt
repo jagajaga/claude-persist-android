@@ -137,3 +137,40 @@ data class KillResult(
 
 @Serializable
 data class ReapResult(val reaped: List<KillResult> = emptyList(), val freedBytes: Long = 0)
+
+/** A model the daemon learned from the SDK (ModelDescriptor in protocol.ts). */
+@Serializable
+data class ModelDescriptor(
+    val value: String,
+    val displayName: String = value,
+    val resolvedModel: String? = null,
+    val description: String? = null,
+    val effortLevels: List<String>? = null,
+)
+
+@Serializable
+data class RateWindow(
+    /** Percent, 0..100. */
+    val utilization: Double? = null,
+    val status: String? = null,
+)
+
+@Serializable
+data class AccountUsage(val windows: Map<String, RateWindow> = emptyMap(), val at: Long = 0)
+
+/** A Claude login the daemon can run chats under (AccountInfo in protocol.ts). */
+@Serializable
+data class AccountInfo(
+    val name: String,
+    val configDir: String? = null,
+    val active: Boolean = false,
+    val lastUsage: AccountUsage? = null,
+    val signedIn: Boolean = true,
+    val loginExpired: Boolean = false,
+)
+
+@Serializable
+data class LoginStarted(val loginId: String, val url: String)
+
+@Serializable
+data class LoginResult(val ok: Boolean, val error: String? = null, val configDir: String? = null)

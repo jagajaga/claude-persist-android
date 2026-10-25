@@ -12,6 +12,8 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -201,8 +203,8 @@ class Store(
     // ---------------------------------------------------------------- sending
 
     /** Queue a message; it is on disk before this returns, and goes out when it can. */
-    fun send(sessionId: String, text: String, images: List<OutgoingImage> = emptyList()) {
-        outbox.add(sessionId, text, images)
+    fun send(sessionId: String, text: String, images: List<OutgoingImage> = emptyList(), files: List<OutgoingFile> = emptyList()) {
+        outbox.add(sessionId, text, images, files)
         _outgoing.value = outbox.pending()
         scope.launch { flushOutbox() }
     }
@@ -220,7 +222,8 @@ class Store(
         for (message in outbox.pending()) {
             outbox.attempted(message.clientMessageId)
             try {
-                gw.request("sendMessage", sendParams(message))
+                val ready = uploadFiles(message)
+                gw.request("sendMessage", sendParams(ready))
                 confirmSent(message.clientMessageId)
             } catch (e: DisconnectedException) {
                 break
@@ -235,25 +238,127 @@ class Store(
         _outgoing.value = outbox.pending()
     }
 
+    /**
+     * Put every file of [message] on the server, resuming each from wherever
+     * the server says it got to; returns the message with every path filled.
+     */
+    private suspend fun uploadFiles(message: OutgoingMessage): OutgoingMessage {
+        var current = message
+        for (file in message.files) {
+            if (file.uploadedPath != null) continue
+            // Its copy is gone (storage cleared): send the rest rather than block the queue forever.
+            if (!File(file.localPath).exists()) continue
+            val path = uploadFile(message.sessionId, file)
+            outbox.fileUploaded(message.clientMessageId, file.uploadId, path)
+            current = current.copy(files = current.files.map { if (it.uploadId == file.uploadId) it.copy(uploadedPath = path) else it })
+        }
+        return current
+    }
+
+    private suspend fun uploadFile(sessionId: String, file: OutgoingFile): String {
+        val local = File(file.localPath)
+        val size = local.length()
+        var offset = 0L
+        var stalls = 0
+        java.io.RandomAccessFile(local, "r").use { raf ->
+            while (true) {
+                val length = minOf(UPLOAD_CHUNK.toLong(), size - offset).toInt().coerceAtLeast(0)
+                val bytes = ByteArray(length)
+                raf.seek(offset)
+                raf.readFully(bytes)
+                val done = offset + length >= size
+                val answer = gw.request(
+                    "uploadChunk",
+                    mapOf(
+                        "sessionId" to JsonPrimitive(sessionId),
+                        "uploadId" to JsonPrimitive(file.uploadId),
+                        "name" to JsonPrimitive(file.name),
+                        "offset" to JsonPrimitive(offset),
+                        "data" to JsonPrimitive(android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)),
+                        "done" to JsonPrimitive(done),
+                    ),
+                    timeoutMs = 60_000,
+                )?.jsonObject ?: throw IllegalStateException("no answer to an upload")
+                answer["path"]?.jsonPrimitive?.contentOrNull?.let { return it }
+                val received = answer["received"]?.jsonPrimitive?.longOrNull ?: throw IllegalStateException("bad upload answer")
+                // The server says where to continue: after this chunk, or back
+                // where it actually got to if an earlier one was lost.
+                if (received <= offset) stalls++ else stalls = 0
+                // Not a refusal, so not a GatewayException (which drops the message): tried again on the next connect.
+                if (stalls > 3) throw IllegalStateException("upload of ${file.name} is not moving")
+                offset = received
+            }
+        }
+    }
+
     private fun sendParams(message: OutgoingMessage): Map<String, JsonElement> = buildMap {
         put("sessionId", JsonPrimitive(message.sessionId))
         put("text", JsonPrimitive(message.text))
         put("clientMessageId", JsonPrimitive(message.clientMessageId))
-        if (message.images.isNotEmpty()) {
-            put(
-                "attachments",
-                JsonArray(
-                    message.images.map { image ->
-                        buildJsonObject {
-                            put("kind", "image")
-                            put("name", image.name)
-                            put("mediaType", image.mediaType)
-                            put("data", image.base64)
-                        }
-                    },
-                ),
-            )
+        val attachments = message.images.map { image ->
+            buildJsonObject {
+                put("kind", "image")
+                put("name", image.name)
+                put("mediaType", image.mediaType)
+                put("data", image.base64)
+            }
+        } + message.files.mapNotNull { file ->
+            file.uploadedPath?.let { path -> buildJsonObject { put("kind", "file"); put("path", path) } }
         }
+        if (attachments.isNotEmpty()) put("attachments", JsonArray(attachments))
+    }
+
+    /** Where a picked file is copied before it is sent; the outbox points here. */
+    val outgoingFilesDir: File get() = File(dir, "outgoing-files").apply { mkdirs() }
+
+    // ---------------------------------------------------------------- model, effort, account
+
+    private val _models = MutableStateFlow<List<ModelDescriptor>>(emptyList())
+    val models: StateFlow<List<ModelDescriptor>> = _models
+    private val _accounts = MutableStateFlow<List<AccountInfo>>(emptyList())
+    val accounts: StateFlow<List<AccountInfo>> = _accounts
+
+    /** What the model menu needs; called when it opens. */
+    suspend fun refreshOptions() {
+        runCatching {
+            _models.value = json.decodeFromJsonElement(ListSerializer(ModelDescriptor.serializer()), gw.request("listModels", waitForConnectionMs = 5_000)!!)
+        }
+        runCatching {
+            _accounts.value = json.decodeFromJsonElement(ListSerializer(AccountInfo.serializer()), gw.request("listAccounts", waitForConnectionMs = 5_000)!!)
+        }
+    }
+
+    /** null leaves a setting alone; "" resets it to the default. */
+    suspend fun setSessionOptions(sessionId: String, model: String? = null, effort: String? = null) {
+        val params = buildMap<String, JsonElement> {
+            put("sessionId", JsonPrimitive(sessionId))
+            model?.let { put("model", if (it.isEmpty()) JsonNull else JsonPrimitive(it)) }
+            effort?.let { put("effort", if (it.isEmpty()) JsonNull else JsonPrimitive(it)) }
+        }
+        gw.request("setSessionOptions", params)
+        refreshSessions()
+    }
+
+    suspend fun setPermissionMode(sessionId: String, mode: String) {
+        gw.request("setPermissionMode", mapOf("sessionId" to JsonPrimitive(sessionId), "mode" to JsonPrimitive(mode)))
+        refreshSessions()
+    }
+
+    suspend fun setAccount(configDir: String?) {
+        val result = gw.request("setAccount", mapOf("configDir" to (configDir?.let { JsonPrimitive(it) } ?: JsonNull)))
+        result?.let { _accounts.value = json.decodeFromJsonElement(ListSerializer(AccountInfo.serializer()), it) }
+    }
+
+    suspend fun startLogin(name: String): LoginStarted =
+        json.decodeFromJsonElement(LoginStarted.serializer(), gw.request("startLogin", mapOf("name" to JsonPrimitive(name)))!!)
+
+    suspend fun submitLoginCode(loginId: String, code: String): LoginResult {
+        val result = json.decodeFromJsonElement(
+            LoginResult.serializer(),
+            gw.request("submitLoginCode", mapOf("loginId" to JsonPrimitive(loginId), "code" to JsonPrimitive(code)), timeoutMs = 60_000)!!,
+        )
+        refreshOptions()
+        return result
     }
 
     // ---------------------------------------------------------------- feed, files, stats
@@ -367,6 +472,8 @@ class Store(
         private const val CACHE_KEEP = 500
         private const val FEED_KEEP = 600
         private const val HISTORY_PAGE = 200
+        /** Raw bytes per upload chunk: a few seconds each on a poor link, so a drop costs little. */
+        private const val UPLOAD_CHUNK = 256 * 1024
         private const val SAVE_DEBOUNCE_MS = 400L
         val FEED_TYPES = setOf(
             "user_message", "assistant_text", "tool_use", "tool_result",

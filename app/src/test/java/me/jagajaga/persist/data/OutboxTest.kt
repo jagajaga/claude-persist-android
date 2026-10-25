@@ -68,4 +68,26 @@ class OutboxTest {
         file.writeText("{ this is not json")
         assertTrue(Outbox(file).pending().isEmpty())
     }
+
+    /** A send that dies after its upload must not upload again, even across a restart. */
+    @Test
+    fun `an uploaded file stays uploaded across a restart`() {
+        val file = tmpFile()
+        val local = File(file.parentFile, "copy.pdf").apply { writeText("pdf") }
+        val box = Outbox(file)
+        val m = box.add("s1", "see attached", files = listOf(OutgoingFile("report.pdf", local.path, 3, "u1")))
+        box.fileUploaded(m.clientMessageId, "u1", "/srv/uploads/s1/u1-report.pdf")
+        val reopened = Outbox(file).pending().single()
+        assertEquals("/srv/uploads/s1/u1-report.pdf", reopened.files.single().uploadedPath)
+    }
+
+    @Test
+    fun `a confirmed message's file copies are cleaned up`() {
+        val file = tmpFile()
+        val local = File(file.parentFile, "copy.bin").apply { writeText("x") }
+        val box = Outbox(file)
+        val m = box.add("s1", "", files = listOf(OutgoingFile("a.bin", local.path, 1, "u1")))
+        box.confirm(m.clientMessageId)
+        assertEquals(false, local.exists())
+    }
 }
