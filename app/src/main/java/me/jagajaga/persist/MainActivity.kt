@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.DynamicFeed
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Settings
@@ -222,7 +223,7 @@ private fun MainTabs(c: Container, nav: NavHostController, banner: @Composable (
                 Text(Tab.entries[tab].label, style = Type.title.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
                 if (Tab.entries[tab] == Tab.Chats) {
                     IconButton(onClick = { nav.navigate("import") }) {
-                        Icon(androidx.compose.material.icons.Icons.Filled.Download, contentDescription = "Import a Claude Code session")
+                        Icon(Icons.Filled.Download, contentDescription = "Import a Claude Code session")
                     }
                 }
                 IconButton(onClick = { nav.navigate("settings") }) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
