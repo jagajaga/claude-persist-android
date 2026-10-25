@@ -10,8 +10,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,9 +48,9 @@ fun StatsBar(store: Store, onOpen: () -> Unit) {
             .fillMaxWidth()
             .background(Palette.page)
             .clickable(onClick = onOpen)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 14.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        // Spread across the whole width, first reading at the left edge, last at the right.
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Reading("CPU", String.format(Locale.ROOT, "%.0f%%", cpu), cpu / 100)
@@ -80,8 +78,8 @@ private fun Reading(label: String, value: String, fraction: Double) {
         else -> Palette.muted
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        if (label.isNotEmpty()) Text("$label ", style = Type.tiny.copy(fontSize = 11.sp, color = Palette.faint))
-        Text(value, style = Type.tiny.copy(fontSize = 11.sp, color = if (color == Palette.muted) Palette.text else color))
+        if (label.isNotEmpty()) Text("$label ", style = Type.tiny.copy(fontSize = 11.sp, color = Palette.faint), maxLines = 1, softWrap = false)
+        Text(value, style = Type.tiny.copy(fontSize = 11.sp, color = if (color == Palette.muted) Palette.text else color), maxLines = 1, softWrap = false)
     }
 }
 
