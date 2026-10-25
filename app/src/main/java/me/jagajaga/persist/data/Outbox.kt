@@ -18,10 +18,24 @@ data class OutgoingMessage(
     /** Any other file: copied into the app's storage, uploaded before the message is sent. */
     val files: List<OutgoingFile> = emptyList(),
     val attempts: Int = 0,
+    /**
+     * Why the server refused it, when it did. A refused message is kept, not
+     * dropped: it is shown as not sent, with Retry and Discard, and it holds
+     * back the chat's later messages so they never arrive out of order.
+     */
+    val failed: String? = null,
 )
 
 @Serializable
-data class OutgoingImage(val name: String, val mediaType: String, val base64: String)
+data class OutgoingImage(
+    val name: String,
+    val mediaType: String,
+    /** Inline bytes, as messages queued by older versions hold them; emptied once uploaded. */
+    val base64: String = "",
+    /** Set once the image is on the server: then it is sent by path, not by bytes. */
+    val uploadedPath: String? = null,
+    val uploadId: String = java.util.UUID.randomUUID().toString(),
+)
 
 /**
  * A file waiting to go. [localPath] is the app's own copy, so the original
@@ -49,15 +63,39 @@ data class OutgoingFile(
  * or rebooting the phone with a message still queued.
  */
 class Outbox(private val file: File, private val now: () -> Long = System::currentTimeMillis) {
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     private val items = LinkedHashMap<String, OutgoingMessage>()
 
     init {
-        if (file.exists()) {
-            runCatching {
-                json.decodeFromString<List<OutgoingMessage>>(file.readText())
-            }.getOrNull()?.forEach { items[it.clientMessageId] = it }
+        load()
+    }
+
+    /**
+     * Read message by message. Reading the whole list at once meant one entry
+     * this version could not parse made the queue look empty -- and the next
+     * save then wrote that emptiness over every message still waiting. An
+     * entry that will not parse is set aside in a file of its own, never
+     * overwritten; a file that is not a list at all is kept the same way.
+     */
+    private fun load() {
+        if (!file.exists()) return
+        val text = runCatching { file.readText() }.getOrNull() ?: return
+        val array = runCatching { json.parseToJsonElement(text) as kotlinx.serialization.json.JsonArray }.getOrNull()
+        if (array == null) {
+            keepAside(text)
+            return
         }
+        val unreadable = mutableListOf<kotlinx.serialization.json.JsonElement>()
+        for (element in array) {
+            runCatching { json.decodeFromJsonElement(OutgoingMessage.serializer(), element) }
+                .onSuccess { items[it.clientMessageId] = it }
+                .onFailure { unreadable += element }
+        }
+        if (unreadable.isNotEmpty()) keepAside(kotlinx.serialization.json.JsonArray(unreadable).toString())
+    }
+
+    private fun keepAside(text: String) {
+        runCatching { File(file.parentFile, "${file.name}.unreadable-${now()}").writeText(text) }
     }
 
     /** Everything still waiting, oldest first. */
@@ -103,6 +141,34 @@ class Outbox(private val file: File, private val now: () -> Long = System::curre
     fun fileUploaded(clientMessageId: String, uploadId: String, path: String) {
         val item = items[clientMessageId] ?: return
         items[clientMessageId] = item.copy(files = item.files.map { if (it.uploadId == uploadId) it.copy(uploadedPath = path) else it })
+        persist()
+    }
+
+    /** The server refused it: kept, marked, shown as not sent. */
+    @Synchronized
+    fun fail(clientMessageId: String, reason: String) {
+        val item = items[clientMessageId] ?: return
+        items[clientMessageId] = item.copy(failed = reason)
+        persist()
+    }
+
+    /** Try a refused message again. */
+    @Synchronized
+    fun retry(clientMessageId: String) {
+        val item = items[clientMessageId] ?: return
+        items[clientMessageId] = item.copy(failed = null, attempts = 0)
+        persist()
+    }
+
+    /** Give up on it, by your choice; its file copies go too. */
+    @Synchronized
+    fun discard(clientMessageId: String) = confirm(clientMessageId)
+
+    /** An image of this message is on the server now; its inline bytes are no longer kept. */
+    @Synchronized
+    fun imageUploaded(clientMessageId: String, uploadId: String, path: String) {
+        val item = items[clientMessageId] ?: return
+        items[clientMessageId] = item.copy(images = item.images.map { if (it.uploadId == uploadId) it.copy(uploadedPath = path, base64 = "") else it })
         persist()
     }
 

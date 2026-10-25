@@ -90,4 +90,58 @@ class OutboxTest {
         box.confirm(m.clientMessageId)
         assertEquals(false, local.exists())
     }
+
+    /** Exactly what the version before this one wrote: photos inline, no upload ids, no failed field. */
+    @Test
+    fun `a queue written by the previous version loads, photos and all`() {
+        val file = tmpFile()
+        file.writeText("""[{"clientMessageId":"phone-1","sessionId":"s1","text":"why so far away?","createdAt":5,
+            "images":[{"name":"195106.jpg","mediaType":"image/jpeg","base64":"AAAA"}],"attempts":7},
+            {"clientMessageId":"phone-2","sessionId":"s1","text":"status","createdAt":6}]""")
+        val box = Outbox(file)
+        assertEquals(listOf("phone-1", "phone-2"), box.pending().map { it.clientMessageId })
+        assertEquals("AAAA", box.pending()[0].images.single().base64)
+    }
+
+    /** One entry it can't read must not wipe the others -- before, the next save emptied the queue. */
+    @Test
+    fun `an unreadable entry is set aside and the rest survive a save`() {
+        val file = tmpFile()
+        file.writeText("""[{"clientMessageId":"phone-ok","sessionId":"s1","text":"keep me","createdAt":1},
+            {"clientMessageId":12,"sessionId":null}]""")
+        val box = Outbox(file)
+        box.add("s1", "new one")
+        assertEquals(listOf("keep me", "new one"), Outbox(file).pending().map { it.text })
+        assertEquals(1, file.parentFile!!.listFiles()!!.count { it.name.startsWith("outbox.json.unreadable-") })
+    }
+
+    @Test
+    fun `a file that is not a list at all is kept, not overwritten`() {
+        val file = tmpFile()
+        file.writeText("{garbage")
+        Outbox(file).add("s1", "after")
+        assertEquals("{garbage", file.parentFile!!.listFiles()!!.first { it.name.startsWith("outbox.json.unreadable-") }.readText())
+    }
+
+    @Test
+    fun `a refusal is kept with its reason, and retry clears it`() {
+        val file = tmpFile()
+        val box = Outbox(file)
+        val m = box.add("s1", "hi")
+        box.fail(m.clientMessageId, "unknown session")
+        assertEquals("unknown session", Outbox(file).pending().single().failed)
+        box.retry(m.clientMessageId)
+        assertEquals(null, Outbox(file).pending().single().failed)
+    }
+
+    @Test
+    fun `an uploaded photo stops holding its bytes`() {
+        val file = tmpFile()
+        val box = Outbox(file)
+        val m = box.add("s1", "pic", images = listOf(OutgoingImage("a.jpg", "image/jpeg", "AAAA", uploadId = "u1")))
+        box.imageUploaded(m.clientMessageId, "u1", "/srv/uploads/s1/u1-a.jpg")
+        val img = Outbox(file).pending().single().images.single()
+        assertEquals("/srv/uploads/s1/u1-a.jpg", img.uploadedPath)
+        assertEquals("", img.base64)
+    }
 }

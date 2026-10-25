@@ -53,6 +53,14 @@ class GatewayException(message: String) : Exception(message)
 class DisconnectedException : Exception("Not connected to the server")
 
 /**
+ * The request went out and no answer came in time. Whether it ran is
+ * unknown -- which is exactly why a send carries its own id: sending it
+ * again is safe. Not a CancellationException (what withTimeout throws), so
+ * no caller mistakes a lost answer for being cancelled.
+ */
+class AnswerLostException(op: String, timeoutMs: Long) : Exception("No answer to $op within ${timeoutMs / 1000}s")
+
+/**
  * The one connection to the daemon, kept up for as long as the app runs.
  *
  * Everything about it is shaped by the network a phone actually has:
@@ -249,7 +257,7 @@ class GatewayClient(
             delay(50)
         }
         return try {
-            withTimeout(timeoutMs) { answer.await() }
+            withTimeoutOrNull(timeoutMs) { answer.await() } ?: if (answer.isCompleted) answer.await() else throw AnswerLostException(op, timeoutMs)
         } finally {
             pending.remove(id)
         }

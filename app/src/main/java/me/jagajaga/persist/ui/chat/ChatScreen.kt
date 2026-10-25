@@ -296,6 +296,8 @@ fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
                     onAnswers = { requestId, answers ->
                         scope.launch { runCatching { store.answerPermission(sessionId, requestId, true, answers) } }
                     },
+                    onRetry = store::retry,
+                    onDiscard = store::discard,
                 )
             }
             if (streaming.isNotBlank()) item(key = "streaming") { StreamingText(streaming) }
@@ -316,9 +318,11 @@ fun ThreadItemView(
     item: ThreadItem,
     onPermission: (requestId: String, allow: Boolean) -> Unit,
     onAnswers: (requestId: String, answers: Map<String, String>) -> Unit,
+    onRetry: (clientMessageId: String) -> Unit = {},
+    onDiscard: (clientMessageId: String) -> Unit = {},
 ) {
     when (item) {
-        is ThreadItem.User -> UserBubble(item)
+        is ThreadItem.User -> UserBubble(item, onRetry, onDiscard)
         is ThreadItem.Assistant -> AssistantText(item)
         is ThreadItem.Tool -> ToolCard(item)
         is ThreadItem.Footer -> Footer(item)
@@ -523,7 +527,7 @@ private fun AgentsChip(agents: List<me.jagajaga.persist.data.ActiveAgent>, onSto
 }
 
 @Composable
-private fun UserBubble(item: ThreadItem.User) {
+private fun UserBubble(item: ThreadItem.User, onRetry: (String) -> Unit, onDiscard: (String) -> Unit) {
     Column(Modifier.fillMaxWidth()) {
         Column(
             Modifier
@@ -548,7 +552,15 @@ private fun UserBubble(item: ThreadItem.User) {
                 }
             }
         }
-        if (item.sending) {
+        val id = item.clientMessageId
+        if (item.failed != null && id != null) {
+            // Refused, not lost: say why, and let you decide.
+            Row(Modifier.align(Alignment.End).padding(top = 3.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Not sent: ${item.failed}", style = Type.tiny.copy(color = Palette.error), maxLines = 2, modifier = Modifier.weight(1f, fill = false))
+                Text("  Retry", style = Type.small.copy(color = Palette.accent, fontWeight = FontWeight.SemiBold), modifier = Modifier.clickable { onRetry(id) }.padding(4.dp))
+                Text("Discard", style = Type.small.copy(color = Palette.muted), modifier = Modifier.clickable { onDiscard(id) }.padding(4.dp))
+            }
+        } else if (item.sending) {
             Text("sending…", style = Type.tiny, modifier = Modifier.align(Alignment.End).padding(top = 3.dp, end = 4.dp))
         }
     }

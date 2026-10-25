@@ -24,6 +24,9 @@ sealed interface ThreadItem {
         val images: List<String>,
         val sending: Boolean,
         val paths: List<String?> = emptyList(),
+        /** Still on this phone: its id, and why the server refused it if it did. */
+        val clientMessageId: String? = null,
+        val failed: String? = null,
     ) : ThreadItem
     data class Assistant(override val key: String, val text: String, val agent: String?) : ThreadItem
     data class Tool(
@@ -226,7 +229,14 @@ object ThreadModel {
         // Written on this phone, not yet confirmed: shown in place, marked as sending.
         for (message in outgoing) {
             if (message.clientMessageId in delivered) continue
-            items += ThreadItem.User("o${message.clientMessageId}", message.text, message.images.map { it.name } + message.files.map { it.name }, sending = true)
+            items += ThreadItem.User(
+                "o${message.clientMessageId}",
+                message.text,
+                message.images.map { it.name } + message.files.map { it.name },
+                sending = true,
+                clientMessageId = message.clientMessageId,
+                failed = message.failed,
+            )
         }
         return items
     }

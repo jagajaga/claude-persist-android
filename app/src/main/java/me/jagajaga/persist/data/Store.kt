@@ -284,31 +284,100 @@ class Store(
      * link is down -- the next connect starts over from the same place.
      */
     suspend fun flushOutbox() = flushLock.withLock {
+        // Chats with a message that did not go: their later messages wait
+        // behind it, so a chat never receives them out of order. Other chats
+        // are not held up by it.
+        val heldBack = mutableSetOf<String>()
+        var tryAgain = false
         for (message in outbox.pending()) {
+            if (message.sessionId in heldBack) continue
+            if (message.failed != null) {
+                heldBack += message.sessionId
+                continue
+            }
             outbox.attempted(message.clientMessageId)
             try {
-                val ready = uploadFiles(message)
-                gw.request("sendMessage", sendParams(ready))
+                val ready = uploadAttachments(message)
+                // A big message gets the time it needs; an 8 MB one got 20 s and never made it.
+                gw.request("sendMessage", sendParams(ready), timeoutMs = 30_000 + sendSize(ready) / 20)
                 confirmSent(message.clientMessageId)
+                retryStep = 0
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: DisconnectedException) {
+                // No link at all: everything waits for the next connect.
+                tryAgain = true
                 break
             } catch (e: GatewayException) {
-                // Refused outright -- the chat was deleted, say. Resending would
-                // be refused forever; let it go rather than block the queue.
-                confirmSent(message.clientMessageId)
+                // Refused outright (the chat was deleted, a file too big). Kept
+                // and shown as not sent, with Retry and Discard -- never dropped.
+                outbox.fail(message.clientMessageId, e.message ?: "refused")
+                heldBack += message.sessionId
             } catch (e: Exception) {
-                break
+                // An answer lost, an upload stalled: sending again is safe, the
+                // server records a message id once. Again shortly.
+                heldBack += message.sessionId
+                tryAgain = true
             }
         }
         _outgoing.value = outbox.pending()
+        if (tryAgain) scheduleRetry()
     }
+
+    /**
+     * Messages still waiting are tried again by themselves -- 3 s, 10 s, 30 s,
+     * then every minute -- not only when the link reconnects or you send
+     * something else. That was the stuck queue: an answer lost on a link that
+     * stayed up left everything waiting for an event that never came.
+     */
+    private var retryStep = 0
+    private var retryJob: Job? = null
+
+    private fun scheduleRetry() {
+        if (retryJob?.isActive == true) return
+        val wait = RETRY_STEPS_MS[minOf(retryStep, RETRY_STEPS_MS.size - 1)]
+        retryStep++
+        retryJob = scope.launch {
+            delay(wait)
+            if (outbox.pending().any { it.failed == null }) flushOutbox()
+        }
+    }
+
+    /** Try a refused message again, now. */
+    fun retry(clientMessageId: String) {
+        outbox.retry(clientMessageId)
+        _outgoing.value = outbox.pending()
+        retryStep = 0
+        scope.launch { flushOutbox() }
+    }
+
+    /** Give up on a message that will not go. */
+    fun discard(clientMessageId: String) {
+        outbox.discard(clientMessageId)
+        _outgoing.value = outbox.pending()
+        scope.launch { flushOutbox() }
+    }
+
+    private fun sendSize(message: OutgoingMessage): Long =
+        message.text.length.toLong() + message.images.sumOf { it.base64.length.toLong() }
 
     /**
      * Put every file of [message] on the server, resuming each from wherever
      * the server says it got to; returns the message with every path filled.
      */
-    private suspend fun uploadFiles(message: OutgoingMessage): OutgoingMessage {
+    private suspend fun uploadAttachments(message: OutgoingMessage): OutgoingMessage {
         var current = message
+        // Photos go up in resumable chunks too, and are then sent by path: inline,
+        // four of them were one request too big to finish on a phone link.
+        for (image in message.images) {
+            if (image.uploadedPath != null || image.base64.isEmpty()) continue
+            val local = File(outgoingFilesDir, "${image.uploadId}-${image.name.replace('/', '_')}")
+            if (!local.exists()) local.writeBytes(android.util.Base64.decode(image.base64, android.util.Base64.DEFAULT))
+            val path = uploadFile(message.sessionId, OutgoingFile(image.name, local.path, local.length(), image.uploadId))
+            outbox.imageUploaded(message.clientMessageId, image.uploadId, path)
+            local.delete()
+            current = current.copy(images = current.images.map { if (it.uploadId == image.uploadId) it.copy(uploadedPath = path, base64 = "") else it })
+        }
         for (file in message.files) {
             if (file.uploadedPath != null) continue
             // Its copy is gone (storage cleared): send the rest rather than block the queue forever.
@@ -365,7 +434,9 @@ class Store(
                 put("kind", "image")
                 put("name", image.name)
                 put("mediaType", image.mediaType)
-                put("data", image.base64)
+                // By path once uploaded (the daemon reads it from its uploads); inline otherwise.
+                val uploaded = image.uploadedPath
+                if (uploaded != null) put("path", uploaded) else put("data", image.base64)
             }
         } + message.files.mapNotNull { file ->
             file.uploadedPath?.let { path -> buildJsonObject { put("kind", "file"); put("path", path) } }
@@ -578,6 +649,7 @@ class Store(
         private const val CACHE_KEEP = 500
         private const val FEED_KEEP = 600
         private const val HISTORY_PAGE = 200
+        private val RETRY_STEPS_MS = longArrayOf(3_000, 10_000, 30_000, 60_000)
         /** Raw bytes per upload chunk: a few seconds each on a poor link, so a drop costs little. */
         private const val UPLOAD_CHUNK = 256 * 1024
         private const val SAVE_DEBOUNCE_MS = 400L

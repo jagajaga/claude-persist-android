@@ -225,4 +225,15 @@ class GatewayClientTest {
         assertEquals("hello", withTimeout(10_000) { result.await() }!!.jsonObject["echo"]!!.jsonPrimitive.content)
         gw.stop()
     }
+
+    /** Sent, and no answer: its own error, so the outbox knows to send it again rather than give up. */
+    @Test
+    fun `a request whose answer never comes says so`() = runBlocking {
+        server.enqueue(echoingUpgrade())
+        val gw = client()
+        gw.start()
+        val outcome = runCatching { withTimeout(10_000) { gw.request("never", timeoutMs = 300) } }
+        assertTrue("got ${outcome.exceptionOrNull()}", outcome.exceptionOrNull() is AnswerLostException)
+        gw.stop()
+    }
 }
