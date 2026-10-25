@@ -24,7 +24,7 @@ import me.jagajaga.persist.ui.list.Tabs
  * the last returns to the list.
  */
 @Composable
-fun ChatPager(store: Store, startId: String, onBack: () -> Unit, banner: @Composable () -> Unit) {
+fun ChatPager(store: Store, startId: String, onBack: () -> Unit, onMove: (String) -> Unit, banner: @Composable () -> Unit) {
     val sessions by store.sessions.collectAsState()
     val saved by store.tabs.collectAsState()
     LaunchedEffect(startId) { store.setTabs(Tabs.open(store.tabs.value, startId)) }
@@ -57,6 +57,7 @@ fun ChatPager(store: Store, startId: String, onBack: () -> Unit, banner: @Compos
         strip = ids.mapNotNull { id -> sessions.firstOrNull { it.id == id } },
         onSelect = { id -> ids.indexOf(id).takeIf { it >= 0 }?.let { scope.launch { pager.animateScrollToPage(it) } } },
         onCloseTab = ::close,
+        onMove = onMove,
         banner = banner,
     ) {
         HorizontalPager(

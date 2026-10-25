@@ -74,6 +74,7 @@ import me.jagajaga.persist.ui.FilesScreen
 import me.jagajaga.persist.ui.LoginScreen
 import me.jagajaga.persist.ui.Palette
 import me.jagajaga.persist.ui.PersistTheme
+import me.jagajaga.persist.ui.StatsBar
 import me.jagajaga.persist.ui.StatsScreen
 import me.jagajaga.persist.ui.Type
 import me.jagajaga.persist.ui.chat.ChatPager
@@ -156,8 +157,23 @@ private fun App(c: Container) {
         )
     }
     CompositionLocalProvider(LocalUriHandler provides uriHandler) {
-    Box(Modifier.fillMaxSize().background(Palette.page).statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().background(Palette.page).statusBarsPadding()) {
+        StatsBar(c.store, onOpen = { nav.navigate("server") { launchSingleTop = true } })
+        Box(Modifier.weight(1f)) {
         NavHost(nav, startDestination = "main") {
+            composable("server") {
+                Column(Modifier.fillMaxSize()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                        Text("Server", style = Type.title.copy(fontWeight = FontWeight.SemiBold))
+                    }
+                    StatsScreen(c.store)
+                }
+            }
+            composable("move/{id}") { entry ->
+                val id = entry.arguments?.getString("id") ?: return@composable
+                MoveChat(c, id, nav)
+            }
             composable("view?path={path}", arguments = listOf(navArgument("path") { type = NavType.StringType })) { entry ->
                 ViewerScreen(c, entry.arguments?.getString("path") ?: "/") { nav.popBackStack() }
             }
@@ -167,7 +183,7 @@ private fun App(c: Container) {
             composable("main") { MainTabs(c, nav, banner) }
             composable("chat/{id}") { entry ->
                 val id = entry.arguments?.getString("id") ?: return@composable
-                ChatPager(c.store, id, onBack = { nav.popBackStack() }, banner = banner)
+                ChatPager(c.store, id, onBack = { nav.popBackStack() }, onMove = { sid -> nav.navigate("move/$sid") }, banner = banner)
             }
             composable("new") { NewChat(c, nav) }
             composable("login") {
@@ -178,6 +194,7 @@ private fun App(c: Container) {
             }
             composable("settings") { SettingsScreen(c, nav) }
             composable("import") { ImportScreen(c, nav) }
+        }
         }
     }
     }
@@ -274,7 +291,7 @@ private fun NewChat(c: Container, nav: NavHostController) {
             IconButton(onClick = { if (chosen != null) folder = null else nav.popBackStack() }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
-            Text("New chat", style = Type.title.copy(fontWeight = FontWeight.SemiBold))
+            Text(if (chosen == null) "New chat: choose its folder" else "New chat", style = Type.title.copy(fontWeight = FontWeight.SemiBold))
         }
         if (chosen == null) {
             // Named after its folder to start with, as the panel does: "blooper2.0-".
@@ -477,5 +494,44 @@ private fun ImportScreen(c: Container, nav: NavHostController) {
                 androidx.compose.material3.HorizontalDivider(color = Palette.border)
             }
         }
+    }
+}
+
+/** Pick a new folder for a chat; its next turn runs there, conversation intact. */
+@Composable
+private fun MoveChat(c: Container, sessionId: String, nav: NavHostController) {
+    val sessions by c.store.sessions.collectAsState()
+    val session = sessions.firstOrNull { it.id == sessionId }
+    val scope = rememberCoroutineScope()
+    var target by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    Column(Modifier.fillMaxSize().background(Palette.page)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+            Column {
+                Text("Move chat to another folder", style = Type.title.copy(fontWeight = FontWeight.SemiBold))
+                Text("Now in ${session?.cwd ?: "…"}", style = Type.tiny)
+            }
+        }
+        error?.let { Text(it, style = Type.small.copy(color = Palette.error), modifier = Modifier.padding(horizontal = 16.dp)) }
+        FilesScreen(c.store, startPath = session?.cwd ?: homeGuess(c), pickFolder = { target = it })
+    }
+    target?.let { to ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { target = null },
+            title = { Text("Move this chat?") },
+            text = { Text("The next message runs in $to, with the whole conversation so far.", style = Type.body) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    target = null
+                    scope.launch {
+                        runCatching { c.store.setSessionCwd(sessionId, to) }
+                            .onSuccess { nav.popBackStack() }
+                            .onFailure { error = it.message }
+                    }
+                }) { Text("Move") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { target = null }) { Text("Cancel") } },
+        )
     }
 }

@@ -482,6 +482,12 @@ class Store(
         gw.request("appRelease", mapOf("download" to JsonPrimitive(download)), timeoutMs = 180_000, waitForConnectionMs = 10_000)!!,
     )
 
+    /** Move a chat to another folder on the server; its next turn runs there. */
+    suspend fun setSessionCwd(sessionId: String, cwd: String) {
+        gw.request("setSessionCwd", mapOf("sessionId" to JsonPrimitive(sessionId), "cwd" to JsonPrimitive(cwd)))
+        refreshSessions()
+    }
+
     suspend fun stats(): ServerStats =
         json.decodeFromJsonElement(ServerStats.serializer(), gw.request("serverStats", waitForConnectionMs = 5_000)!!)
 

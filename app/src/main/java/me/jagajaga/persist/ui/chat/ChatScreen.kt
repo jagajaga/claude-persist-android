@@ -124,6 +124,7 @@ fun ChatFrame(
     strip: List<SessionInfo>,
     onSelect: (String) -> Unit,
     onCloseTab: (String) -> Unit,
+    onMove: (String) -> Unit,
     banner: @Composable () -> Unit,
     thread: @Composable ColumnScope.() -> Unit,
 ) {
@@ -139,7 +140,7 @@ fun ChatFrame(
             .navigationBarsPadding()
             .imePadding(),
     ) {
-        TopBar(session, onBack, onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } }, onClose = { onCloseTab(sessionId) })
+        TopBar(session, onBack, onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } }, onClose = { onCloseTab(sessionId) }, onMove = { onMove(sessionId) })
         if (strip.isNotEmpty()) ChatStrip(strip, sessionId, onSelect, onCloseTab)
         banner()
         thread()
@@ -376,7 +377,7 @@ private fun ChatStrip(strip: List<SessionInfo>, current: String, onSelect: (Stri
 }
 
 @Composable
-private fun TopBar(session: SessionInfo?, onBack: () -> Unit, onStop: () -> Unit, onClose: () -> Unit) {
+private fun TopBar(session: SessionInfo?, onBack: () -> Unit, onStop: () -> Unit, onClose: () -> Unit, onMove: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().background(Palette.surface).padding(end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -384,7 +385,14 @@ private fun TopBar(session: SessionInfo?, onBack: () -> Unit, onStop: () -> Unit
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
         Column(Modifier.weight(1f)) {
             Text(session?.title ?: "", style = Type.title.copy(fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(session?.cwd ?: "", style = Type.tiny, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // The folder: tap to move the chat somewhere else.
+            Text(
+                (session?.cwd ?: "") + "  ✎",
+                style = Type.tiny.copy(color = Palette.accent),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable(enabled = session != null, onClick = onMove),
+            )
         }
         if (session?.working == true) {
             IconButton(onClick = onStop) { Icon(Icons.Filled.Stop, contentDescription = "Stop", tint = Palette.error) }
