@@ -152,7 +152,13 @@ class GatewayClientTest {
         gw.start()
         withTimeout(10_000) { gw.request("hello") }
         val inFlight = async { runCatching { gw.request("never", timeoutMs = 30_000) } }
-        Thread.sleep(200)
+        // Drop the link only once the request is truly in flight: one not yet
+        // sent is retried after the reconnect by design, which is another test.
+        val deadline = System.currentTimeMillis() + 5_000
+        while (received.none { it.contains("\"never\"") }) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("the request never reached the server")
+            Thread.sleep(10)
+        }
         serverSocket(gw).close(1011, "server dropped the link")
         val outcome = withTimeout(10_000) { inFlight.await() }
         assertTrue("got ${outcome.exceptionOrNull()}", outcome.exceptionOrNull() is DisconnectedException)
