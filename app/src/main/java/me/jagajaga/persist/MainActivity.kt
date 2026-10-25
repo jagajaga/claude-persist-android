@@ -74,7 +74,7 @@ import me.jagajaga.persist.ui.Palette
 import me.jagajaga.persist.ui.PersistTheme
 import me.jagajaga.persist.ui.StatsScreen
 import me.jagajaga.persist.ui.Type
-import me.jagajaga.persist.ui.chat.ChatScreen
+import me.jagajaga.persist.ui.chat.ChatPager
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -139,14 +139,7 @@ private fun App(c: Container) {
             composable("main") { MainTabs(c, nav, banner) }
             composable("chat/{id}") { entry ->
                 val id = entry.arguments?.getString("id") ?: return@composable
-                ChatScreen(
-                    c.store,
-                    id,
-                    onBack = { nav.popBackStack() },
-                    // Switching replaces this chat rather than stacking: back still goes to the list.
-                    onSwitch = { other -> nav.navigate("chat/$other") { popUpTo("chat/{id}") { inclusive = true } } },
-                    banner = banner,
-                )
+                ChatPager(c.store, id, onBack = { nav.popBackStack() }, banner = banner)
             }
             composable("new") { NewChat(c, nav) }
             composable("login") {

@@ -192,6 +192,18 @@ object ThreadModel {
         else -> n.toString()
     }
 
+    /** How full the context window is after the latest turn, 0..1; null before any turn says. */
+    fun contextFill(events: List<JsonObject>): Double? {
+        for (stored in events.asReversed()) {
+            val event = stored["event"] as? JsonObject ?: continue
+            if (event.str("type") != "result") continue
+            val used = (event["contextTokens"] as? JsonPrimitive)?.doubleOrNull ?: continue
+            val window = (event["contextWindow"] as? JsonPrimitive)?.doubleOrNull ?: continue
+            if (window > 0) return (used / window).coerceIn(0.0, 1.0)
+        }
+        return null
+    }
+
     /** The newest thing you asked, for the prompt bar at the top. */
     fun lastPrompt(items: List<ThreadItem>): String? =
         items.lastOrNull { it is ThreadItem.User && it.text.isNotBlank() }?.let { (it as ThreadItem.User).text }

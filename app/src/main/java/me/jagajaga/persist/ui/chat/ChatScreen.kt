@@ -27,6 +27,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -44,6 +46,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -97,7 +100,6 @@ import me.jagajaga.persist.ui.Palette
 import me.jagajaga.persist.ui.StatusDot
 import me.jagajaga.persist.ui.Type
 import me.jagajaga.persist.ui.clock
-import me.jagajaga.persist.ui.list.ChatOrder
 import me.jagajaga.persist.ui.markdown.MarkdownText
 import java.io.ByteArrayOutputStream
 
@@ -106,7 +108,9 @@ fun ChatScreen(
     store: Store,
     sessionId: String,
     onBack: () -> Unit,
-    onSwitch: (String) -> Unit,
+    /** The chats along the top, in swipe order; this one among them. */
+    strip: List<SessionInfo>,
+    onSelect: (String) -> Unit,
     banner: @Composable () -> Unit,
 ) {
     DisposableEffect(sessionId) {
@@ -130,8 +134,9 @@ fun ChatScreen(
             .imePadding(),
     ) {
         TopBar(session, onBack, onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } })
-        val others = remember(sessions, sessionId) { ChatOrder.active(sessions).filter { it.id != sessionId } }
-        if (others.isNotEmpty()) ActiveStrip(others, onSwitch)
+        // Live status for each chip, order fixed by the pager so a swipe lands where it looks like it will.
+        val live = remember(sessions) { sessions.associateBy { it.id } }
+        if (strip.size > 1) ChatStrip(strip.map { live[it.id] ?: it }, sessionId, onSelect)
         banner()
         ThreadModel.lastPrompt(items)?.let { PromptBar(it) }
 
@@ -165,6 +170,16 @@ fun ChatScreen(
             val last = listState.layoutInfo.totalItemsCount - 1
             val atBottom = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= last - 3 } ?: true
             if (atBottom && last >= 0) listState.scrollToItem(last)
+        }
+        // The keyboard opening shrinks the list from below; scroll by as much,
+        // so what was at the bottom stays just above the input, as in the
+        // panel. Closing it does the same the other way.
+        LaunchedEffect(listState) {
+            var last = 0
+            snapshotFlow { listState.layoutInfo.viewportSize.height }.collect { height ->
+                if (last != 0 && height != last && landed) listState.scrollBy((last - height).toFloat())
+                last = height
+            }
         }
         // Reaching the top pages the earlier part in; the list keeps its place.
         LaunchedEffect(listState, hasEarlier) {
@@ -202,7 +217,12 @@ fun ChatScreen(
             session,
             pill = session?.let { Options.pill(it.model, it.activeModel, it.effort, models) } ?: "Default",
             filesDir = store.outgoingFilesDir,
+            contextFill = remember(events) { ThreadModel.contextFill(events) },
             onOptions = { optionsOpen = true },
+            onToggleBypass = {
+                val bypass = session?.permissionMode == "bypassPermissions"
+                scope.launch { runCatching { store.setPermissionMode(sessionId, if (bypass) "default" else "bypassPermissions") } }
+            },
         ) { text, images, files -> store.send(sessionId, text, images, files) }
         if (optionsOpen && session != null) OptionsSheet(store, session) { optionsOpen = false }
     }
@@ -243,26 +263,29 @@ private fun EarlierRow(loading: Boolean, error: String?, onLoad: () -> Unit) {
     }
 }
 
-/** The other chats working right now, one tap away. */
+/** Working chats, then recent ones: tap one, or swipe the chat sideways to step through them. */
 @Composable
-private fun ActiveStrip(others: List<SessionInfo>, onSwitch: (String) -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(Palette.surface)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+private fun ChatStrip(strip: List<SessionInfo>, current: String, onSelect: (String) -> Unit) {
+    val state = rememberLazyListState()
+    val index = strip.indexOfFirst { it.id == current }
+    LaunchedEffect(index) { if (index >= 0) state.animateScrollToItem((index - 1).coerceAtLeast(0)) }
+    LazyRow(
+        state = state,
+        modifier = Modifier.fillMaxWidth().background(Palette.surface),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        for (s in others) {
+        items(strip, key = { it.id }) { s ->
+            val on = s.id == current
             Row(
                 Modifier
-                    .border(1.dp, Palette.border, RoundedCornerShape(50))
-                    .clickable { onSwitch(s.id) }
+                    .background(if (on) Palette.accentSoft else Palette.surface, RoundedCornerShape(50))
+                    .border(1.dp, if (on) Palette.accent else Palette.border, RoundedCornerShape(50))
+                    .clickable(enabled = !on) { onSelect(s.id) }
                     .padding(horizontal = 10.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                StatusDot(working = true)
+                StatusDot(working = s.working, error = s.status == "error")
                 Spacer(Modifier.width(6.dp))
                 Text(s.title, style = Type.tiny.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
             }
@@ -549,7 +572,9 @@ private fun Composer(
     session: SessionInfo?,
     pill: String,
     filesDir: java.io.File,
+    contextFill: Double?,
     onOptions: () -> Unit,
+    onToggleBypass: () -> Unit,
     onSend: (String, List<OutgoingImage>, List<OutgoingFile>) -> Unit,
 ) {
     val textState = rememberTextFieldState()
@@ -659,12 +684,27 @@ private fun Composer(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
-                    .weight(1f, fill = false)
+                    .widthIn(max = 150.dp)
                     .border(1.dp, Palette.border, RoundedCornerShape(50))
                     .clickable(enabled = session != null, onClick = onOptions)
                     .padding(horizontal = 12.dp, vertical = 7.dp),
             )
+            contextFill?.let { ContextRing(it) }
+            // Everything after this sits at the right edge, as in the panel.
             Spacer(Modifier.weight(1f))
+            val bypass = session?.permissionMode == "bypassPermissions"
+            Row(
+                Modifier
+                    .background(if (bypass) Palette.warn else Palette.surface, RoundedCornerShape(50))
+                    .border(1.dp, if (bypass) Palette.warn else Palette.border, RoundedCornerShape(50))
+                    .clickable(enabled = session != null, onClick = onToggleBypass)
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Shield, contentDescription = null, tint = if (bypass) Color.White else Palette.muted, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Bypass", style = Type.small.copy(color = if (bypass) Color.White else Palette.muted))
+            }
             val canSend = text.isNotBlank() || images.isNotEmpty() || files.isNotEmpty()
             Box(
                 Modifier
@@ -679,6 +719,29 @@ private fun Composer(
                 contentAlignment = Alignment.Center,
             ) { Icon(Icons.Filled.ArrowUpward, contentDescription = "Send", tint = Color.White) }
         }
+    }
+}
+
+/** How full the context window is, as the panel's ring. */
+@Composable
+private fun ContextRing(fill: Double) {
+    val color = when {
+        fill > 0.9 -> Palette.error
+        fill > 0.75 -> Palette.warn
+        else -> Palette.accent
+    }
+    androidx.compose.foundation.Canvas(Modifier.size(20.dp)) {
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.5.dp.toPx())
+        drawCircle(Palette.border, style = stroke, radius = size.minDimension / 2 - stroke.width)
+        drawArc(
+            color,
+            startAngle = -90f,
+            sweepAngle = (360 * fill).toFloat(),
+            useCenter = false,
+            style = stroke,
+            topLeft = androidx.compose.ui.geometry.Offset(stroke.width, stroke.width),
+            size = androidx.compose.ui.geometry.Size(size.width - 2 * stroke.width, size.height - 2 * stroke.width),
+        )
     }
 }
 

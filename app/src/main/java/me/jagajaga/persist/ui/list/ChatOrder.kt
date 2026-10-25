@@ -18,4 +18,17 @@ object ChatOrder {
 
     /** The chats doing something right now, for switching between them. */
     fun active(sessions: List<SessionInfo>): List<SessionInfo> = recent(sessions.filter { it.working })
+
+    /**
+     * The chats above a chat, and the order a swipe walks them: everything
+     * working first, then the most recent, [current] always among them.
+     */
+    fun strip(sessions: List<SessionInfo>, current: String, max: Int = 15): List<SessionInfo> {
+        val working = active(sessions)
+        val rest = recent(sessions).filter { !it.working }
+        val list = (working + rest).take(max)
+        if (list.any { it.id == current }) return list
+        val mine = sessions.firstOrNull { it.id == current } ?: return list
+        return list.take(max - 1) + mine
+    }
 }

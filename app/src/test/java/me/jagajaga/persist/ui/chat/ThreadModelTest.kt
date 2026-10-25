@@ -126,4 +126,15 @@ class ThreadModelTest {
         assertEquals("report.pdf", attachmentName("/home/me/.claude-persist/uploads/s1/0f8e2b1a-1c2d-4e5f-8a9b-0123456789ab-report.pdf"))
         assertEquals("notes.txt", attachmentName("/w/project/notes.txt"))
     }
+
+    @Test
+    fun `the context ring reads the newest turn that reported it`() {
+        val events = listOf(
+            kotlinx.serialization.json.Json.parseToJsonElement("""{"seq":1,"event":{"type":"result","contextTokens":100000,"contextWindow":1000000}}""") as JsonObject,
+            kotlinx.serialization.json.Json.parseToJsonElement("""{"seq":2,"event":{"type":"result","contextTokens":250000,"contextWindow":1000000}}""") as JsonObject,
+            kotlinx.serialization.json.Json.parseToJsonElement("""{"seq":3,"event":{"type":"result","durationMs":5}}""") as JsonObject,
+        )
+        assertEquals(0.25, ThreadModel.contextFill(events)!!, 1e-9)
+        assertEquals(null, ThreadModel.contextFill(emptyList()))
+    }
 }

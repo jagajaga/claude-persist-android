@@ -32,4 +32,15 @@ class ChatOrderTest {
         val more = chats + s("busy-cp", "/w/persist", 70, status = "running")
         assertEquals(listOf("busy-cp", "mid-blp"), ChatOrder.active(more).map { it.id })
     }
+
+    @Test
+    fun `the strip is working chats first, then recent ones`() {
+        assertEquals(listOf("mid-blp", "newest-blp", "new-cp", "old-blp"), ChatOrder.strip(chats, "new-cp").map { it.id })
+    }
+
+    @Test
+    fun `the chat on screen is always in its own strip`() {
+        val strip = ChatOrder.strip(chats, "old-blp", max = 2)
+        assertEquals(listOf("mid-blp", "old-blp"), strip.map { it.id })
+    }
 }
