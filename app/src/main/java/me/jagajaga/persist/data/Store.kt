@@ -46,6 +46,8 @@ class Store(
     private val gw: GatewayClient,
     private val dir: File,
     private val scope: CoroutineScope,
+    /** Uploads over HTTPS, off the chat socket; null in tests, where the socket path is used. */
+    private val http: me.jagajaga.persist.net.HttpUploader? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
@@ -425,7 +427,44 @@ class Store(
         return current
     }
 
+    /** False once a server has said it has no HTTP upload route, so the socket is used instead. */
+    @Volatile
+    private var httpUploads = true
+
     private suspend fun uploadFile(sessionId: String, file: OutgoingFile): String {
+        val uploader = http
+        if (uploader != null && httpUploads) {
+            try {
+                return uploadOverHttp(uploader, sessionId, file)
+            } catch (e: me.jagajaga.persist.net.UploadRouteMissing) {
+                httpUploads = false // an older daemon: fall back below
+            }
+        }
+        return uploadOverSocket(sessionId, file)
+    }
+
+    /** Raw bytes, 4 MB a request, resuming from whatever the server says it holds. */
+    private suspend fun uploadOverHttp(uploader: me.jagajaga.persist.net.HttpUploader, sessionId: String, file: OutgoingFile): String {
+        val local = File(file.localPath)
+        val size = local.length()
+        var offset = 0L
+        var stalls = 0
+        java.io.RandomAccessFile(local, "r").use { raf ->
+            while (true) {
+                val length = minOf(HTTP_CHUNK.toLong(), size - offset).toInt().coerceAtLeast(0)
+                val bytes = ByteArray(length)
+                raf.seek(offset)
+                raf.readFully(bytes)
+                val answer = uploader.put(sessionId, file.uploadId, file.name, offset, bytes, done = offset + length >= size)
+                answer.path?.let { return it }
+                if (answer.received <= offset) stalls++ else stalls = 0
+                if (stalls > 3) throw IllegalStateException("upload of ${file.name} is not moving")
+                offset = answer.received
+            }
+        }
+    }
+
+    private suspend fun uploadOverSocket(sessionId: String, file: OutgoingFile): String {
         val local = File(file.localPath)
         val size = local.length()
         var offset = 0L
@@ -688,6 +727,8 @@ class Store(
         private val RETRY_STEPS_MS = longArrayOf(3_000, 10_000, 30_000, 60_000)
         /** Raw bytes per upload chunk: a few seconds each on a poor link, so a drop costs little. */
         private const val UPLOAD_CHUNK = 256 * 1024
+        /** Raw bytes per HTTP upload request. */
+        private const val HTTP_CHUNK = 4 * 1024 * 1024
         private const val SAVE_DEBOUNCE_MS = 400L
         val FEED_TYPES = setOf(
             "user_message", "assistant_text", "tool_use", "tool_result",

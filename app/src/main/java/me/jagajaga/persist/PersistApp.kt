@@ -66,7 +66,15 @@ class Container(context: Context) {
         cookie = { CookieManager.getInstance().getCookie(settings.baseUrl) },
     )
 
-    val store = Store(gateway, File(context.filesDir, "persist"), scope)
+    val store = Store(
+        gateway,
+        File(context.filesDir, "persist"),
+        scope,
+        http = me.jagajaga.persist.net.HttpUploader(
+            baseUrl = { settings.httpBase },
+            cookie = { CookieManager.getInstance().getCookie(settings.baseUrl) },
+        ),
+    )
 
     /** A chat a tapped notification asked for, until the UI has opened it. */
     val pendingOpen = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
