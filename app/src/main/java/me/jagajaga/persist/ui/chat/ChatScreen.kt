@@ -760,7 +760,7 @@ private fun DetailBlock(label: String, body: String, error: Boolean = false) {
             buildAnnotatedString {
                 for ((piece, link) in Links.segments(body.take(20_000))) {
                     if (link == null) append(piece)
-                    else withLink(LinkAnnotation.Url(link, TextLinkStyles(SpanStyle(color = Palette.accent)))) { append(piece) }
+                    else withLink(me.jagajaga.persist.ui.viewer.LinkRouter.link(link, TextLinkStyles(SpanStyle(color = Palette.accent)))) { append(piece) }
                 }
             }
         }

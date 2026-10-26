@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import me.jagajaga.persist.ui.Mono
 import me.jagajaga.persist.ui.Palette
 import me.jagajaga.persist.ui.Type
+import me.jagajaga.persist.ui.viewer.LinkRouter
 import me.jagajaga.persist.ui.viewer.Links
 
 private val linkStyle = TextLinkStyles(SpanStyle(color = Palette.accent, textDecoration = TextDecoration.Underline))
@@ -43,7 +44,7 @@ private fun AnnotatedString.Builder.appendInlines(inlines: List<Inline>) {
     for (node in inlines) when (node) {
         // Paths and URLs written as plain text are tappable too.
         is Inline.Text -> for ((piece, link) in Links.segments(node.text)) {
-            if (link == null) append(piece) else withLink(LinkAnnotation.Url(link, linkStyle)) { append(piece) }
+            if (link == null) append(piece) else withLink(LinkRouter.link(link, linkStyle)) { append(piece) }
         }
         is Inline.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { appendInlines(node.children) }
         is Inline.Italic -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { appendInlines(node.children) }
@@ -53,10 +54,10 @@ private fun AnnotatedString.Builder.appendInlines(inlines: List<Inline>) {
             if (link == null) {
                 withStyle(code) { append(node.text) }
             } else {
-                withLink(LinkAnnotation.Url(link, TextLinkStyles(code.copy(color = Palette.accent)))) { append(node.text) }
+                withLink(LinkRouter.link(link, TextLinkStyles(code.copy(color = Palette.accent)))) { append(node.text) }
             }
         }
-        is Inline.Link -> withLink(LinkAnnotation.Url(node.url, linkStyle)) { appendInlines(node.children) }
+        is Inline.Link -> withLink(LinkRouter.link(node.url, linkStyle)) { appendInlines(node.children) }
     }
 }
 

@@ -37,6 +37,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -158,6 +159,13 @@ private fun App(c: Container) {
             openWeb = { url -> nav.navigate("web?url=" + Uri.encode(url)) },
             openFile = { path -> nav.navigate("view?path=" + Uri.encode(path)) },
         )
+    }
+    // Every link in the app goes through this, whatever Compose would do with it.
+    val systemHandler = LocalUriHandler.current
+    DisposableEffect(uriHandler) {
+        me.jagajaga.persist.ui.viewer.LinkRouter.handler = uriHandler
+        me.jagajaga.persist.ui.viewer.LinkRouter.fallback = { runCatching { systemHandler.openUri(it) } }
+        onDispose { if (me.jagajaga.persist.ui.viewer.LinkRouter.handler === uriHandler) me.jagajaga.persist.ui.viewer.LinkRouter.handler = null }
     }
     CompositionLocalProvider(LocalUriHandler provides uriHandler) {
     Column(Modifier.fillMaxSize().background(Palette.page).statusBarsPadding()) {
