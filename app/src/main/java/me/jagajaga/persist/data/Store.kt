@@ -283,7 +283,39 @@ class Store(
      * Send everything waiting, oldest first, stopping at the first sign the
      * link is down -- the next connect starts over from the same place.
      */
-    suspend fun flushOutbox() = flushLock.withLock {
+    /** What the queue is doing, for the banner: trying now, and how the last try went. */
+    data class SendStatus(val trying: Boolean = false, val lastTryAt: Long = 0, val lastError: String? = null)
+
+    private val _sendStatus = MutableStateFlow(SendStatus())
+    val sendStatus: StateFlow<SendStatus> = _sendStatus
+
+    /** The banner's "Send now": try everything waiting at once, whatever the retry schedule says. */
+    fun sendNow() {
+        retryJob?.cancel()
+        retryStep = 0
+        outbox.pending().filter { it.failed != null }.forEach { outbox.retry(it.clientMessageId) }
+        _outgoing.value = outbox.pending()
+        scope.launch { flushOutbox() }
+    }
+
+    suspend fun flushOutbox() {
+        _sendStatus.value = _sendStatus.value.copy(trying = true)
+        // Nothing thrown here may vanish with its coroutine: whatever stops a
+        // send is shown in the banner, and the queue is tried again.
+        val error = runCatching { flushQueue() }.exceptionOrNull()
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        _sendStatus.value = SendStatus(trying = false, lastTryAt = System.currentTimeMillis(), lastError = error?.let { describe(it) } ?: lastSendError)
+        if (error != null) scheduleRetry()
+    }
+
+    /** The last per-message failure of a flush, for the banner. */
+    @Volatile
+    private var lastSendError: String? = null
+
+    private fun describe(e: Throwable): String = (e.message ?: e.javaClass.simpleName).take(160)
+
+    private suspend fun flushQueue() = flushLock.withLock {
+        lastSendError = null
         // Chats with a message that did not go: their later messages wait
         // behind it, so a chat never receives them out of order. Other chats
         // are not held up by it.
@@ -306,16 +338,19 @@ class Store(
                 throw e
             } catch (e: DisconnectedException) {
                 // No link at all: everything waits for the next connect.
+                lastSendError = describe(e)
                 tryAgain = true
                 break
             } catch (e: GatewayException) {
                 // Refused outright (the chat was deleted, a file too big). Kept
                 // and shown as not sent, with Retry and Discard -- never dropped.
                 outbox.fail(message.clientMessageId, e.message ?: "refused")
+                lastSendError = describe(e)
                 heldBack += message.sessionId
             } catch (e: Exception) {
                 // An answer lost, an upload stalled: sending again is safe, the
                 // server records a message id once. Again shortly.
+                lastSendError = describe(e)
                 heldBack += message.sessionId
                 tryAgain = true
             }
@@ -339,6 +374,7 @@ class Store(
         retryStep++
         retryJob = scope.launch {
             delay(wait)
+            retryJob = null
             if (outbox.pending().any { it.failed == null }) flushOutbox()
         }
     }

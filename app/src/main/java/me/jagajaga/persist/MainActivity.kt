@@ -139,12 +139,15 @@ private fun App(c: Container) {
         if (state is ConnectionState.NeedsLogin && route != "login") nav.navigate("login")
     }
 
+    val sending by c.store.sendStatus.collectAsState()
     val banner: @Composable () -> Unit = {
         ConnectionBanner(
             state = state,
             queued = outgoing.size,
             onLogin = { nav.navigate("login") },
             onRetry = { c.gateway.reconnectNow() },
+            sending = sending,
+            onSendNow = { c.store.sendNow() },
         )
     }
 

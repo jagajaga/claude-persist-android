@@ -41,7 +41,14 @@ import java.util.Locale
  * a spinner tells you nothing.
  */
 @Composable
-fun ConnectionBanner(state: ConnectionState, queued: Int, onLogin: () -> Unit, onRetry: () -> Unit) {
+fun ConnectionBanner(
+    state: ConnectionState,
+    queued: Int,
+    onLogin: () -> Unit,
+    onRetry: () -> Unit,
+    sending: me.jagajaga.persist.data.Store.SendStatus = me.jagajaga.persist.data.Store.SendStatus(),
+    onSendNow: () -> Unit = {},
+) {
     if (state is ConnectionState.Online && queued == 0) return
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(state) {
@@ -52,7 +59,15 @@ fun ConnectionBanner(state: ConnectionState, queued: Int, onLogin: () -> Unit, o
     }
     val queuedText = if (queued > 0) " · $queued queued" else ""
     val (text, color, action) = when (state) {
-        is ConnectionState.Online -> Triple("Sending$queuedText", Palette.accentSoft, null)
+        // Online with messages waiting: say what the last try ran into, and offer to try now.
+        is ConnectionState.Online -> {
+            val last = when {
+                sending.trying -> "sending now"
+                sending.lastTryAt == 0L -> "waiting"
+                else -> "last try ${((now - sending.lastTryAt) / 1000).coerceAtLeast(0)}s ago" + (sending.lastError?.let { ": $it" } ?: "")
+            }
+            Triple("$queued queued · $last", if (sending.lastError != null) Color(0xFFFFF4E5) else Palette.accentSoft, "Send now" to onSendNow)
+        }
         is ConnectionState.Connecting -> Triple("Connecting…$queuedText", Palette.accentSoft, null)
         is ConnectionState.Offline -> {
             val secs = ((state.retryAtMs - now) / 1000).coerceAtLeast(0)
@@ -68,7 +83,7 @@ fun ConnectionBanner(state: ConnectionState, queued: Int, onLogin: () -> Unit, o
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(text, style = Type.small.copy(color = Palette.text))
+        Text(text, style = Type.small.copy(color = Palette.text), maxLines = 3, modifier = Modifier.weight(1f, fill = false))
         if (action != null) {
             Text(
                 action.first,
