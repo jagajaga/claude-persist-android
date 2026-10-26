@@ -27,4 +27,20 @@ class TabsTest {
         assertEquals(listOf("a"), Tabs.existing(listOf("a", "gone"), setOf("a", "b")))
         assertEquals(listOf("a", "gone"), Tabs.existing(listOf("a", "gone"), emptySet()))
     }
+
+    /** The bug: the chat a screen was opened on came straight back when you closed its tab. */
+    @Test
+    fun `the tab a screen was opened on stays closed once closed`() {
+        val start = "c"
+        var saved = Tabs.open(listOf("a", "b"), start)
+        val (left, next) = Tabs.close(saved, start, current = start)
+        saved = left
+        assertEquals(listOf("a", "b"), Tabs.visible(saved, start, startSaved = true, known = setOf("a", "b", "c")))
+        assertEquals("b", next)
+    }
+
+    @Test
+    fun `before it is saved, the chat opened on is shown already`() {
+        assertEquals(listOf("a", "c"), Tabs.visible(listOf("a"), "c", startSaved = false, known = emptySet()))
+    }
 }

@@ -21,6 +21,15 @@ object Tabs {
         return left to (left.getOrNull(at) ?: left.lastOrNull())
     }
 
+    /**
+     * The tabs to show. The chat this screen was opened on is added once --
+     * until that is saved, it is shown as if it were. After that it is a tab
+     * like any other: adding it on every redraw put it straight back the
+     * moment you closed it.
+     */
+    fun visible(saved: List<String>, startId: String, startSaved: Boolean, known: Set<String>): List<String> =
+        existing(if (startSaved) saved else open(saved, startId), known)
+
     /** Chats deleted elsewhere drop out. */
     fun existing(tabs: List<String>, known: Set<String>): List<String> =
         if (known.isEmpty()) tabs else tabs.filter { it in known }

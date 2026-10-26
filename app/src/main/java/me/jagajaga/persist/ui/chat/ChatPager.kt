@@ -27,9 +27,13 @@ import me.jagajaga.persist.ui.list.Tabs
 fun ChatPager(store: Store, startId: String, onBack: () -> Unit, onMove: (String) -> Unit, banner: @Composable () -> Unit) {
     val sessions by store.sessions.collectAsState()
     val saved by store.tabs.collectAsState()
-    LaunchedEffect(startId) { store.setTabs(Tabs.open(store.tabs.value, startId)) }
+    var startSaved by remember(startId) { mutableStateOf(false) }
+    LaunchedEffect(startId) {
+        store.setTabs(Tabs.open(store.tabs.value, startId))
+        startSaved = true
+    }
     val known = remember(sessions) { sessions.map { it.id }.toSet() }
-    val ids = Tabs.existing(Tabs.open(saved, startId), known).ifEmpty { listOf(startId) }
+    val ids = Tabs.visible(saved, startId, startSaved, known).ifEmpty { listOf(startId) }
     var current by remember { mutableStateOf(startId) }
     val pager = rememberPagerState(initialPage = ids.indexOf(startId).coerceAtLeast(0)) { ids.size }
     val scope = rememberCoroutineScope()
