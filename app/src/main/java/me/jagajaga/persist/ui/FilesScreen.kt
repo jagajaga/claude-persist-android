@@ -27,6 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -71,7 +73,13 @@ fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)?
         path = to
     }
 
-    LaunchedEffect(path) {
+    var reload by remember { mutableStateOf(0) }
+    var naming by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val c = context.container
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    LaunchedEffect(path, reload) {
         error = null
         listing = runCatching { store.list(path) }.onFailure { error = it.message }.getOrNull()
         val (index, offset) = places[path] ?: (0 to 0)
@@ -94,9 +102,37 @@ fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)?
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Up")
             }
             Text(path, style = Type.small.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            IconButton(onClick = { naming = true }) {
+                Icon(Icons.Filled.CreateNewFolder, contentDescription = "New folder")
+            }
             if (pickFolder != null) {
                 OutlinedButton(onClick = { pickFolder(path) }) { Text("Use this folder") }
             }
+        }
+        if (naming) {
+            var name by remember { mutableStateOf("") }
+            var problem by remember { mutableStateOf<String?>(null) }
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { naming = false },
+                title = { Text("New folder in ${path.trimEnd('/').substringAfterLast('/').ifEmpty { "/" }}") },
+                text = {
+                    Column {
+                        androidx.compose.material3.OutlinedTextField(value = name, onValueChange = { name = it; problem = null }, singleLine = true, placeholder = { Text("Folder name") })
+                        problem?.let { Text(it, style = Type.small.copy(color = Palette.error)) }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(enabled = name.isNotBlank() && !name.contains('/'), onClick = {
+                        val target = path.trimEnd('/') + "/" + name.trim()
+                        scope.launch {
+                            runCatching { store.mkdir(target) }
+                                .onSuccess { naming = false; reload++ }
+                                .onFailure { problem = it.message }
+                        }
+                    }) { Text("Create") }
+                },
+                dismissButton = { androidx.compose.material3.TextButton(onClick = { naming = false }) { Text("Cancel") } },
+            )
         }
         error?.let { Text(it, style = Type.small.copy(color = Palette.error), modifier = Modifier.padding(14.dp)) }
         val entries = listing?.entries.orEmpty().let { all -> if (pickFolder != null) all.filter { it.isDir } else all }
@@ -132,7 +168,16 @@ fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)?
                     )
                     Spacer(Modifier.width(12.dp))
                     Text(entry.name, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    if (!entry.isDir) Text(bytes(entry.size), style = Type.tiny)
+                    if (!entry.isDir) {
+                        Text(bytes(entry.size), style = Type.tiny)
+                        // To the phone's Downloads, by Android's download manager.
+                        IconButton(onClick = {
+                            val full = path.trimEnd('/') + "/" + entry.name
+                            runCatching { me.jagajaga.persist.net.SystemDownload.start(context, c.settings.fileUrl(full), c.downloads.cookieHeader(), entry.name) }
+                                .onSuccess { android.widget.Toast.makeText(context, "Downloading ${entry.name}", android.widget.Toast.LENGTH_SHORT).show() }
+                                .onFailure { error = "Couldn't download: ${it.message}" }
+                        }) { Icon(Icons.Filled.Download, contentDescription = "Download ${entry.name}", tint = Palette.muted) }
+                    }
                 }
                 HorizontalDivider(color = Palette.border, modifier = Modifier.padding(start = 48.dp))
             }

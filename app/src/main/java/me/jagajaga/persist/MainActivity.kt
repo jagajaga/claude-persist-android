@@ -44,7 +44,6 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import me.jagajaga.persist.ui.viewer.AppUriHandler
-import me.jagajaga.persist.ui.viewer.BrowserScreen
 import me.jagajaga.persist.ui.viewer.UpdateCheck
 import me.jagajaga.persist.ui.viewer.ViewerScreen
 import me.jagajaga.persist.ui.viewer.openExternally
@@ -156,7 +155,6 @@ private fun App(c: Container) {
     val uriHandler = remember(nav) {
         AppUriHandler(
             context,
-            openWeb = { url -> nav.navigate("web?url=" + Uri.encode(url)) },
             openFile = { path -> nav.navigate("view?path=" + Uri.encode(path)) },
         )
     }
@@ -187,9 +185,6 @@ private fun App(c: Container) {
             }
             composable("view?path={path}", arguments = listOf(navArgument("path") { type = NavType.StringType })) { entry ->
                 ViewerScreen(c, entry.arguments?.getString("path") ?: "/") { nav.popBackStack() }
-            }
-            composable("web?url={url}", arguments = listOf(navArgument("url") { type = NavType.StringType })) { entry ->
-                BrowserScreen(entry.arguments?.getString("url") ?: "about:blank") { nav.popBackStack() }
             }
             composable("main") { MainTabs(c, nav, banner) }
             composable("chat/{id}") { entry ->

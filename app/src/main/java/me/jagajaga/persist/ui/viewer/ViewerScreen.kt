@@ -17,6 +17,7 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.ui.input.pointer.positionChanged
@@ -64,6 +65,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.jagajaga.persist.Container
+import me.jagajaga.persist.container
 import me.jagajaga.persist.ui.Palette
 import me.jagajaga.persist.ui.TextFileViewer
 import me.jagajaga.persist.ui.Type
@@ -121,6 +123,16 @@ private fun Frame(path: String, onClose: () -> Unit, dark: Boolean = false, titl
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = fg) }
             Text(title ?: path.substringBefore('?').substringAfterLast('/'), style = Type.title.copy(color = fg), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            // Save it to the phone's Downloads.
+            val context = LocalContext.current
+            val c = context.container
+            IconButton(onClick = {
+                val web = path.startsWith("http://") || path.startsWith("https://")
+                val url = if (web) path else c.settings.fileUrl(path)
+                val name = path.substringBefore('?').substringAfterLast('/')
+                runCatching { me.jagajaga.persist.net.SystemDownload.start(context, url, if (web && !path.startsWith(c.settings.baseUrl)) null else c.downloads.cookieHeader(), name) }
+                    .onSuccess { android.widget.Toast.makeText(context, "Downloading $name", android.widget.Toast.LENGTH_SHORT).show() }
+            }) { Icon(androidx.compose.material.icons.Icons.Filled.Download, contentDescription = "Download", tint = fg) }
         }
         Box(Modifier.fillMaxSize()) { content() }
     }

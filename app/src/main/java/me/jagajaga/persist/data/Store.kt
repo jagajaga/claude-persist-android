@@ -617,6 +617,11 @@ class Store(
     suspend fun list(path: String): FsListing =
         json.decodeFromJsonElement(FsListing.serializer(), gw.request("fsList", mapOf("path" to JsonPrimitive(path)))!!)
 
+    /** Make a new folder on the server. */
+    suspend fun mkdir(path: String) {
+        gw.request("fsMkdir", mapOf("path" to JsonPrimitive(path)))
+    }
+
     suspend fun read(path: String, offset: Long = 0): FsRead = json.decodeFromJsonElement(
         FsRead.serializer(),
         gw.request("fsRead", mapOf("path" to JsonPrimitive(path), "offset" to JsonPrimitive(offset)))!!,

@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Background notifications: Claude waiting on you, a turn finished. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Saving to Downloads on Android 8 and 9; later versions need no permission for it. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
 

@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
@@ -27,14 +28,17 @@ import me.jagajaga.persist.ui.list.Tabs
 fun ChatPager(store: Store, startId: String, onBack: () -> Unit, onMove: (String) -> Unit, banner: @Composable () -> Unit) {
     val sessions by store.sessions.collectAsState()
     val saved by store.tabs.collectAsState()
-    var startSaved by remember(startId) { mutableStateOf(false) }
+    // Saveable, not remember: leaving this screen (to open an image, a link)
+    // and coming back reset both, which put a closed start tab back and
+    // jumped you to it.
+    var startSaved by rememberSaveable(startId) { mutableStateOf(false) }
     LaunchedEffect(startId) {
         store.setTabs(Tabs.open(store.tabs.value, startId))
         startSaved = true
     }
     val known = remember(sessions) { sessions.map { it.id }.toSet() }
     val ids = Tabs.visible(saved, startId, startSaved, known).ifEmpty { listOf(startId) }
-    var current by remember { mutableStateOf(startId) }
+    var current by rememberSaveable { mutableStateOf(startId) }
     val pager = rememberPagerState(initialPage = ids.indexOf(startId).coerceAtLeast(0)) { ids.size }
     val scope = rememberCoroutineScope()
 
