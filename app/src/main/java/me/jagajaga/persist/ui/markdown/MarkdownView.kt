@@ -38,16 +38,17 @@ import me.jagajaga.persist.ui.viewer.Links
 
 private val linkStyle = TextLinkStyles(SpanStyle(color = Palette.accent, textDecoration = TextDecoration.Underline))
 
-fun annotate(inlines: List<Inline>): AnnotatedString = buildAnnotatedString { appendInlines(inlines) }
+fun annotate(inlines: List<Inline>, resolve: (String) -> String = { it }): AnnotatedString =
+    buildAnnotatedString { appendInlines(inlines, resolve) }
 
-private fun AnnotatedString.Builder.appendInlines(inlines: List<Inline>) {
+private fun AnnotatedString.Builder.appendInlines(inlines: List<Inline>, resolve: (String) -> String) {
     for (node in inlines) when (node) {
         // Paths and URLs written as plain text are tappable too.
         is Inline.Text -> for ((piece, link) in Links.segments(node.text)) {
             if (link == null) append(piece) else withLink(LinkRouter.link(link, linkStyle)) { append(piece) }
         }
-        is Inline.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { appendInlines(node.children) }
-        is Inline.Italic -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { appendInlines(node.children) }
+        is Inline.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { appendInlines(node.children, resolve) }
+        is Inline.Italic -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { appendInlines(node.children, resolve) }
         is Inline.Code -> {
             val code = SpanStyle(fontFamily = Mono, background = Palette.codeBg, fontSize = 13.5.sp)
             val link = Links.wholeLink(node.text)
@@ -57,42 +58,53 @@ private fun AnnotatedString.Builder.appendInlines(inlines: List<Inline>) {
                 withLink(LinkRouter.link(link, TextLinkStyles(code.copy(color = Palette.accent)))) { append(node.text) }
             }
         }
-        is Inline.Link -> withLink(LinkRouter.link(node.url, linkStyle)) { appendInlines(node.children) }
+        is Inline.Link -> withLink(LinkRouter.link(resolve(node.url), linkStyle)) { appendInlines(node.children, resolve) }
+        // Drawn as the picture itself, under its block (see MarkdownText); nothing in the text.
+        is Inline.Image -> Unit
     }
 }
 
 /** Claude's reply, laid out the way the panel lays it out. */
 @Composable
-fun MarkdownText(source: String, modifier: Modifier = Modifier) {
+fun MarkdownText(source: String, modifier: Modifier = Modifier, baseDir: String? = null) {
     val blocks = remember(source) { Markdown.parse(source) }
+    val resolve: (String) -> String = remember(baseDir) { { url -> Markdown.resolve(url, baseDir) } }
     SelectionContainer {
         Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (block in blocks) MarkdownBlock(block)
+            for (block in blocks) {
+                // A block that is only a picture has no text to show.
+                val textless = block is Block.Paragraph && block.inlines.all { it is Inline.Image || (it is Inline.Text && it.text.isBlank()) }
+                if (!textless) MarkdownBlock(block, resolve)
+                // Its pictures and videos, shown as themselves, right under it.
+                for (image in Markdown.imagesIn(block)) {
+                    me.jagajaga.persist.ui.viewer.MediaPreview(resolve(image.url), maxHeight = 360.dp, hideOnFailure = false)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun MarkdownBlock(block: Block) {
+private fun MarkdownBlock(block: Block, resolve: (String) -> String) {
     when (block) {
         is Block.Heading -> Text(
-            annotate(block.inlines),
+            annotate(block.inlines, resolve),
             style = Type.body.copy(
                 fontWeight = FontWeight.SemiBold,
                 fontSize = when (block.level) { 1 -> 20.sp; 2 -> 18.sp; else -> 16.sp },
             ),
         )
-        is Block.Paragraph -> Text(annotate(block.inlines), style = Type.body)
+        is Block.Paragraph -> Text(annotate(block.inlines, resolve), style = Type.body)
         is Block.ListItem -> Row(Modifier.padding(start = (block.depth * 16).dp)) {
             Text(if (block.ordered) "${block.number}." else "•", style = Type.body, modifier = Modifier.width(22.dp))
-            Text(annotate(block.inlines), style = Type.body)
+            Text(annotate(block.inlines, resolve), style = Type.body)
         }
         is Block.Quote -> Row(
             Modifier
                 .fillMaxWidth()
                 .background(Palette.accentSoft, RoundedCornerShape(6.dp))
                 .padding(horizontal = 10.dp, vertical = 6.dp),
-        ) { Text(annotate(block.inlines), style = Type.body.copy(color = Palette.muted)) }
+        ) { Text(annotate(block.inlines, resolve), style = Type.body.copy(color = Palette.muted)) }
         is Block.Code -> Text(
             block.text,
             style = Type.code,
@@ -108,10 +120,10 @@ private fun MarkdownBlock(block: Block) {
                 .horizontalScroll(rememberScrollState())
                 .border(1.dp, Palette.border, RoundedCornerShape(6.dp)),
         ) {
-            TableRow(block.header, header = true)
+            TableRow(block.header, header = true, resolve)
             for (row in block.rows) {
                 HorizontalDivider(color = Palette.border)
-                TableRow(row, header = false)
+                TableRow(row, header = false, resolve)
             }
         }
         Block.Rule -> HorizontalDivider(color = Palette.border)
@@ -119,11 +131,11 @@ private fun MarkdownBlock(block: Block) {
 }
 
 @Composable
-private fun TableRow(cells: List<List<Inline>>, header: Boolean) {
+private fun TableRow(cells: List<List<Inline>>, header: Boolean, resolve: (String) -> String) {
     Row {
         for (cell in cells) {
             Text(
-                annotate(cell),
+                annotate(cell, resolve),
                 style = Type.small.copy(
                     color = Palette.text,
                     fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal,

@@ -617,6 +617,24 @@ class Store(
     suspend fun list(path: String): FsListing =
         json.decodeFromJsonElement(FsListing.serializer(), gw.request("fsList", mapOf("path" to JsonPrimitive(path)))!!)
 
+    /** A source file coloured by the server as VS Code colours it. */
+    suspend fun highlight(path: String): Highlighted {
+        val o = gw.request("fsHighlight", mapOf("path" to JsonPrimitive(path)), timeoutMs = 60_000)!!.jsonObject
+        val lines = (o["lines"] as JsonArray).map { line ->
+            (line as JsonArray).map { span ->
+                val a = span as JsonArray
+                Span(a[0].jsonPrimitive.content, (a[1] as? JsonPrimitive)?.contentOrNull, (a[2] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0)
+            }
+        }
+        return Highlighted(
+            language = o["language"]?.jsonPrimitive?.contentOrNull ?: "text",
+            fg = o["fg"]?.jsonPrimitive?.contentOrNull ?: "#000000",
+            bg = o["bg"]?.jsonPrimitive?.contentOrNull ?: "#ffffff",
+            lines = lines,
+            truncated = o["truncated"]?.jsonPrimitive?.content == "true",
+        )
+    }
+
     /** Make a new folder on the server. */
     suspend fun mkdir(path: String) {
         gw.request("fsMkdir", mapOf("path" to JsonPrimitive(path)))

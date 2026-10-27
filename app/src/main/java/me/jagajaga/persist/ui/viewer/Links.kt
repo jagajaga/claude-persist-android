@@ -6,8 +6,8 @@ import java.net.URLDecoder
 sealed interface LinkTarget {
     /** A web page: opened in the app's own browser, logged in like the rest. */
     data class Web(val url: String) : LinkTarget
-    /** A file on the server, by absolute path: opened in the app's viewer. */
-    data class ServerFile(val path: String) : LinkTarget
+    /** A file on the server, by absolute path: opened in the app's viewer, at [line] when the link names one. */
+    data class ServerFile(val path: String, val line: Int? = null) : LinkTarget
     /** mailto:, tel: and the like: handed to the phone. */
     data class External(val uri: String) : LinkTarget
 }
@@ -23,11 +23,14 @@ object Links {
         return when {
             u.startsWith(MEDIA) -> LinkTarget.ServerFile(u.removePrefix(MEDIA))
             u.startsWith("http://", ignoreCase = true) || u.startsWith("https://", ignoreCase = true) -> LinkTarget.Web(u)
-            u.startsWith("file://") -> LinkTarget.ServerFile(cleanPath(URLDecoder.decode(u.removePrefix("file://"), "UTF-8")))
-            u.startsWith("/") -> LinkTarget.ServerFile(cleanPath(u))
+            u.startsWith("file://") -> URLDecoder.decode(u.removePrefix("file://"), "UTF-8").let { LinkTarget.ServerFile(cleanPath(it), lineOf(it)) }
+            u.startsWith("/") -> LinkTarget.ServerFile(cleanPath(u), lineOf(u))
             else -> LinkTarget.External(u)
         }
     }
+
+    /** "/a/b.kt:42:7" -> 42; the line a link points at, if it names one. */
+    fun lineOf(path: String): Int? = Regex(":(\\d+)(:\\d+)?$").find(path.substringBefore('#'))?.groupValues?.get(1)?.toIntOrNull()
 
     /** "/a/b.kt:42:7" and "/a/b.md#heading" are the file /a/b.kt and /a/b.md. */
     fun cleanPath(path: String): String = path.substringBefore('#').replace(Regex(":\\d+(:\\d+)?$"), "")

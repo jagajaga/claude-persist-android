@@ -15,7 +15,7 @@ class LinksTest {
 
     @Test
     fun `a line number or anchor is not part of the file`() {
-        assertEquals(LinkTarget.ServerFile("/w/app/Main.kt"), Links.target("/w/app/Main.kt:42:7"))
+        assertEquals(LinkTarget.ServerFile("/w/app/Main.kt", line = 42), Links.target("/w/app/Main.kt:42:7"))
         assertEquals(LinkTarget.ServerFile("/w/README.md"), Links.target("/w/README.md#install"))
     }
 

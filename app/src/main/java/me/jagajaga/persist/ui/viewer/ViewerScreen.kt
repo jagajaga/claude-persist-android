@@ -78,7 +78,7 @@ import java.io.File
  * fetched and offered to whichever app on the phone opens it.
  */
 @Composable
-fun ViewerScreen(c: Container, path: String, onClose: () -> Unit) {
+fun ViewerScreen(c: Container, path: String, line: Int? = null, onClose: () -> Unit) {
     // Opened from a chat's preview: swipe through every picture and video in it.
     val gallery = Gallery.items
     val at = gallery.indexOf(path)
@@ -87,7 +87,8 @@ fun ViewerScreen(c: Container, path: String, onClose: () -> Unit) {
         return
     }
     when (Links.kind(path.substringBefore('?'))) {
-        FileKind.Text -> TextFileViewer(c.store, path, onClose)
+        // Source and markdown: coloured as VS Code colours them, markdown rendered.
+        FileKind.Text -> SourceViewer(c, path, line, onClose)
         FileKind.Video, FileKind.Audio -> Frame(path, onClose, dark = true) { MediaPlayer(c, path, active = true) }
         FileKind.Image -> Frame(path, onClose, dark = true) { Fetched(c, path) { ZoomableImage(it) {} } }
         FileKind.Pdf -> Frame(path, onClose) { Fetched(c, path) { PdfPages(it) } }

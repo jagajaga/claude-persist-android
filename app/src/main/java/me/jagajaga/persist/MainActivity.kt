@@ -155,7 +155,7 @@ private fun App(c: Container) {
     val uriHandler = remember(nav) {
         AppUriHandler(
             context,
-            openFile = { path -> nav.navigate("view?path=" + Uri.encode(path)) },
+            openFile = { path, line -> nav.navigate("view?path=" + Uri.encode(path) + (line?.let { "&line=$it" } ?: "")) },
         )
     }
     // Every link in the app goes through this, whatever Compose would do with it.
@@ -183,8 +183,14 @@ private fun App(c: Container) {
                 val id = entry.arguments?.getString("id") ?: return@composable
                 MoveChat(c, id, nav)
             }
-            composable("view?path={path}", arguments = listOf(navArgument("path") { type = NavType.StringType })) { entry ->
-                ViewerScreen(c, entry.arguments?.getString("path") ?: "/") { nav.popBackStack() }
+            composable(
+                "view?path={path}&line={line}",
+                arguments = listOf(
+                    navArgument("path") { type = NavType.StringType },
+                    navArgument("line") { type = NavType.IntType; defaultValue = 0 },
+                ),
+            ) { entry ->
+                ViewerScreen(c, entry.arguments?.getString("path") ?: "/", line = entry.arguments?.getInt("line")?.takeIf { it > 0 }) { nav.popBackStack() }
             }
             composable("main") { MainTabs(c, nav, banner) }
             composable("chat/{id}") { entry ->

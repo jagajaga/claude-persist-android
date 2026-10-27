@@ -25,6 +25,8 @@ sealed interface Inline {
     data class Italic(val children: List<Inline>) : Inline
     data class Code(val text: String) : Inline
     data class Link(val children: List<Inline>, val url: String) : Inline
+    /** `![alt](src)`, and the `<img>` / `<video>` tags READMEs use: shown as the picture or video itself. */
+    data class Image(val alt: String, val url: String) : Inline
 }
 
 object Markdown {
@@ -35,8 +37,50 @@ object Markdown {
     private val rule = Regex("""^\s*([-*_])(\s*\1){2,}\s*$""")
     private val tableSeparator = Regex("""^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$""")
 
+    private val htmlMedia = Regex("""<(?:img|video|source)\b[^>]*?\bsrc\s*=\s*["']([^"']+)["'][^>]*>(?:\s*</video>)?""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Where a link or picture in a file points: absolute paths and web links as
+     * they are, anything else relative to the file's own folder, with ./ and
+     * ../ folded and an #anchor dropped.
+     */
+    fun resolve(url: String, baseDir: String?): String {
+        val u = url.trim()
+        if (baseDir == null || u.isEmpty() || u.startsWith("/") || u.startsWith("#") || Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(u)) return u
+        val parts = ArrayDeque(baseDir.trimEnd('/').split('/').filter { it.isNotEmpty() })
+        for (piece in u.substringBefore('#').split('/')) when (piece) {
+            "", "." -> {}
+            ".." -> parts.removeLastOrNull()
+            else -> parts.addLast(piece)
+        }
+        return "/" + parts.joinToString("/")
+    }
+
+    /** Every picture or video a block shows. */
+    fun imagesIn(block: Block): List<Inline.Image> {
+        fun walk(list: List<Inline>): List<Inline.Image> = list.flatMap {
+            when (it) {
+                is Inline.Image -> listOf(it)
+                is Inline.Bold -> walk(it.children)
+                is Inline.Italic -> walk(it.children)
+                is Inline.Link -> walk(it.children)
+                else -> emptyList()
+            }
+        }
+        return when (block) {
+            is Block.Heading -> walk(block.inlines)
+            is Block.Paragraph -> walk(block.inlines)
+            is Block.ListItem -> walk(block.inlines)
+            is Block.Quote -> walk(block.inlines)
+            is Block.Table -> (block.header + block.rows.flatten()).flatMap { walk(it) }
+            else -> emptyList()
+        }
+    }
+
     fun parse(source: String): List<Block> {
-        val lines = source.replace("\r\n", "\n").split('\n')
+        val lines = source.replace("\r\n", "\n")
+            .replace(htmlMedia) { m -> "![](${m.groupValues[1]})" }
+            .split('\n')
         val blocks = mutableListOf<Block>()
         val paragraph = mutableListOf<String>()
 
@@ -171,6 +215,18 @@ object Markdown {
                         continue
                     }
                 }
+                c == '!' && text.startsWith("![", i) -> {
+                    val close = text.indexOf(']', i + 2)
+                    if (close > i && close + 1 < text.length && text[close + 1] == '(') {
+                        val end = text.indexOf(')', close + 2)
+                        if (end > close) {
+                            flush()
+                            out += Inline.Image(text.substring(i + 2, close), text.substring(close + 2, end).trim().substringBefore(' '))
+                            i = end + 1
+                            continue
+                        }
+                    }
+                }
                 c == '[' -> {
                     val close = text.indexOf(']', i + 1)
                     if (close > i && close + 1 < text.length && text[close + 1] == '(') {
@@ -199,6 +255,7 @@ object Markdown {
             is Inline.Bold -> append(plain(node.children))
             is Inline.Italic -> append(plain(node.children))
             is Inline.Link -> append(plain(node.children))
+            is Inline.Image -> append(node.alt)
         }
     }
 }

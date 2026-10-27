@@ -244,3 +244,8 @@ data class ClaudeSessionCandidate(
     val title: String = "",
     val mtimeMs: Double = 0.0,
 )
+
+/** One run of text in one colour: colour "#rrggbb", or null for the theme's text colour; style 1 italic, 2 bold, 4 underline. */
+data class Span(val text: String, val color: String?, val style: Int)
+
+data class Highlighted(val language: String, val fg: String, val bg: String, val lines: List<List<Span>>, val truncated: Boolean)

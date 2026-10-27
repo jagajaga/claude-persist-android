@@ -84,4 +84,21 @@ class MarkdownTest {
     fun `an unmatched marker is just text`() {
         assertEquals("2 * 3 = 6 and a lone ` tick", Markdown.plain(para("2 * 3 = 6 and a lone ` tick")))
     }
+
+    @Test
+    fun `pictures are parsed, including the html tags READMEs use`() {
+        val blocks = Markdown.parse("Intro ![shot](img/a.png) here\n\n<img src=\"docs/b.jpg\" width=\"300\">\n\n<video src=\"clip.mp4\"></video>")
+        assertEquals(listOf("img/a.png", "docs/b.jpg", "clip.mp4"), blocks.flatMap { Markdown.imagesIn(it) }.map { it.url })
+    }
+
+    @Test
+    fun `paths in a file resolve against its own folder`() {
+        assertEquals("/w/repo/img/a.png", Markdown.resolve("img/a.png", "/w/repo"))
+        assertEquals("/w/repo/a.png", Markdown.resolve("./a.png", "/w/repo"))
+        assertEquals("/w/b.md", Markdown.resolve("../b.md#setup", "/w/repo"))
+        assertEquals("/abs/x.png", Markdown.resolve("/abs/x.png", "/w/repo"))
+        assertEquals("https://x.org/a.png", Markdown.resolve("https://x.org/a.png", "/w/repo"))
+        assertEquals("#anchor", Markdown.resolve("#anchor", "/w/repo"))
+        assertEquals("img/a.png", Markdown.resolve("img/a.png", null))
+    }
 }
