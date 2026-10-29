@@ -397,7 +397,7 @@ class Store(
     }
 
     private fun sendSize(message: OutgoingMessage): Long =
-        message.text.length.toLong() + message.images.sumOf { it.base64.length.toLong() }
+        message.text.length.toLong() + message.images.sumOf { image -> if (image.uploadedPath != null) 0L else image.base64.length.toLong() }
 
     /**
      * Put every file of [message] on the server, resuming each from wherever
@@ -408,9 +408,13 @@ class Store(
         // Photos go up in resumable chunks too, and are then sent by path: inline,
         // four of them were one request too big to finish on a phone link.
         for (image in message.images) {
-            if (image.uploadedPath != null || image.base64.isEmpty()) continue
-            val local = File(outgoingFilesDir, "${image.uploadId}-${image.name.replace('/', '_')}")
-            if (!local.exists()) local.writeBytes(android.util.Base64.decode(image.base64, android.util.Base64.DEFAULT))
+            if (image.uploadedPath != null) continue
+            val local = image.localPath?.let(::File) ?: File(outgoingFilesDir, "${image.uploadId}-${image.name.replace('/', '_')}")
+            if (!local.exists()) {
+                // Its copy is gone (storage cleared) and there are no inline bytes: send the rest.
+                if (image.base64.isEmpty()) continue
+                local.writeBytes(android.util.Base64.decode(image.base64, android.util.Base64.DEFAULT))
+            }
             val path = uploadFile(message.sessionId, OutgoingFile(image.name, local.path, local.length(), image.uploadId))
             outbox.imageUploaded(message.clientMessageId, image.uploadId, path)
             local.delete()
@@ -504,7 +508,7 @@ class Store(
         put("sessionId", JsonPrimitive(message.sessionId))
         put("text", JsonPrimitive(message.text))
         put("clientMessageId", JsonPrimitive(message.clientMessageId))
-        val attachments = message.images.map { image ->
+        val attachments = message.images.filter { it.uploadedPath != null || it.base64.isNotEmpty() }.map { image ->
             buildJsonObject {
                 put("kind", "image")
                 put("name", image.name)

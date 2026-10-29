@@ -3,7 +3,6 @@ package me.jagajaga.persist.ui.chat
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -931,8 +930,14 @@ private fun Composer(
     var attachError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Off the main thread: shrinking a 12 MP photo froze the app for seconds.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
-        uris.forEach { uri -> encodeImage(context, uri)?.let { images += it } }
+        scope.launch {
+            for (uri in uris) {
+                withContext(Dispatchers.IO) { encodeImage(context, uri, filesDir) }?.let { images += it }
+                    ?: run { attachError = "Couldn't read that image" }
+            }
+        }
     }
     // Any file at all; copied off the main thread, since it may be large.
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -970,9 +975,9 @@ private fun Composer(
                         Modifier.background(Palette.codeBg, RoundedCornerShape(50)).padding(start = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        LocalImage(image.base64, 36.dp)
+                        LocalImage(image, 36.dp)
                         // A real target for a finger, not the glyph.
-                        Box(Modifier.size(32.dp).clickable { images.remove(image) }, contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(32.dp).clickable { images.remove(image); image.localPath?.let { java.io.File(it).delete() } }, contentAlignment = Alignment.Center) {
                             Text("×", style = Type.body)
                         }
                     }
@@ -993,7 +998,7 @@ private fun Composer(
                         content.consume { item ->
                             val uri = item.uri ?: return@consume false
                             scope.launch {
-                                withContext(Dispatchers.IO) { encodeImage(context, uri) }?.let { images += it }
+                                withContext(Dispatchers.IO) { encodeImage(context, uri, filesDir) }?.let { images += it }
                                     ?: run { attachError = "Couldn't read that image" }
                             }
                             true
@@ -1131,7 +1136,7 @@ private const val MAX_UPLOAD_BYTES = 200L * 1024 * 1024
  * full size is a send that never finishes: anything over 1.5 MB is scaled to
  * 2000 px on its long side and re-encoded as JPEG.
  */
-private fun encodeImage(context: android.content.Context, uri: Uri): OutgoingImage? = runCatching {
+private fun encodeImage(context: android.content.Context, uri: Uri, dir: java.io.File): OutgoingImage? = runCatching {
     val resolver = context.contentResolver
     val raw = resolver.openInputStream(uri)!!.use { it.readBytes() }
     val type = resolver.getType(uri) ?: "image/jpeg"
@@ -1158,5 +1163,8 @@ private fun encodeImage(context: android.content.Context, uri: Uri): OutgoingIma
         bytes = out.toByteArray()
         mediaType = "image/jpeg"
     }
-    OutgoingImage(name = name, mediaType = mediaType, base64 = Base64.encodeToString(bytes, Base64.NO_WRAP))
+    val uploadId = java.util.UUID.randomUUID().toString()
+    val local = java.io.File(dir, "$uploadId-${name.replace('/', '_')}")
+    local.writeBytes(bytes)
+    OutgoingImage(name = name, mediaType = mediaType, localPath = local.path, uploadId = uploadId)
 }.getOrNull()

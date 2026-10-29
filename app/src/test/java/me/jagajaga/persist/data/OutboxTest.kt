@@ -1,6 +1,7 @@
 package me.jagajaga.persist.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -143,5 +144,17 @@ class OutboxTest {
         val img = Outbox(file).pending().single().images.single()
         assertEquals("/srv/uploads/s1/u1-a.jpg", img.uploadedPath)
         assertEquals("", img.base64)
+    }
+
+    @Test
+    fun `a photo waiting in a file keeps its bytes out of the outbox, and goes once sent`() {
+        val file = tmpFile()
+        val photo = File(file.parentFile, "u2-b.jpg").apply { writeBytes(ByteArray(300_000) { 7 }) }
+        val box = Outbox(file)
+        val m = box.add("s1", "pic", images = listOf(OutgoingImage("b.jpg", "image/jpeg", localPath = photo.path, uploadId = "u2")))
+        assertTrue("outbox is ${file.length()} B", file.length() < 2_000)
+        assertEquals(photo.path, Outbox(file).pending().single().images.single().localPath)
+        box.confirm(m.clientMessageId)
+        assertFalse(photo.exists())
     }
 }

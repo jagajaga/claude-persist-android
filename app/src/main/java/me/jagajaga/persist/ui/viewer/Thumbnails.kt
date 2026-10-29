@@ -134,11 +134,13 @@ private fun videoFrame(url: String, cookie: String?): ImageBitmap? {
 
 /** A picture not yet sent, from its bytes on the phone. */
 @Composable
-fun LocalImage(base64: String, size: Dp, modifier: Modifier = Modifier) {
-    val bitmap = remember(base64) {
+fun LocalImage(image: me.jagajaga.persist.data.OutgoingImage, size: Dp, modifier: Modifier = Modifier) {
+    val bitmap = remember(image.uploadId) {
         runCatching {
-            val bytes = Base64.decode(base64, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = 4 })?.asImageBitmap()
+            image.localPath?.let { decodeThumb(File(it), target = 200) } ?: run {
+                val bytes = Base64.decode(image.base64, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = 4 })?.asImageBitmap()
+            }
         }.getOrNull()
     }
     if (bitmap != null) {

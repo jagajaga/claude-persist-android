@@ -32,6 +32,12 @@ data class OutgoingImage(
     val mediaType: String,
     /** Inline bytes, as messages queued by older versions hold them; emptied once uploaded. */
     val base64: String = "",
+    /**
+     * The picture's bytes in the app's storage. New photos wait here rather
+     * than as base64 in the outbox, which is rewritten whole on every change:
+     * a few photos made each of those writes megabytes.
+     */
+    val localPath: String? = null,
     /** Set once the image is on the server: then it is sent by path, not by bytes. */
     val uploadedPath: String? = null,
     val uploadId: String = java.util.UUID.randomUUID().toString(),
@@ -134,6 +140,7 @@ class Outbox(private val file: File, private val now: () -> Long = System::curre
         persist()
         // The server has its own copy of every file now.
         done.files.forEach { runCatching { File(it.localPath).delete() } }
+        done.images.forEach { image -> image.localPath?.let { runCatching { File(it).delete() } } }
     }
 
     /** A file of this message is on the server now, at [path]. */
