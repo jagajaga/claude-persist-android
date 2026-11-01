@@ -536,7 +536,8 @@ private fun UserBubble(item: ThreadItem.User, onRetry: (String) -> Unit, onDisca
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            if (item.text.isNotBlank()) Text(item.text, style = Type.body)
+            // Long-press to select and copy, as in Claude's answers.
+            if (item.text.isNotBlank()) androidx.compose.foundation.text.selection.SelectionContainer { Text(item.text, style = Type.body) }
             MediaRow(remember(item.text) { Links.mediaIn(item.text) })
             if (item.images.isNotEmpty()) {
                 // Pictures as pictures; anything else (or a picture with no copy on the server) as a chip.

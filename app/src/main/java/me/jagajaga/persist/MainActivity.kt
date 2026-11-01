@@ -90,7 +90,9 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
         )
         val c = container
-        c.pendingOpen.value = intent?.getStringExtra(me.jagajaga.persist.notify.Notifications.EXTRA_CHAT)
+        // Only a fresh launch: an activity recreated (rotation, back from recents)
+        // still carries the old notification's intent and would jump there again.
+        if (savedInstanceState == null) c.pendingOpen.value = intent?.getStringExtra(me.jagajaga.persist.notify.Notifications.EXTRA_CHAT)
         if (c.settings.notify) me.jagajaga.persist.notify.NotifyService.start(this)
         setContent { PersistTheme { App(c) } }
     }
@@ -129,7 +131,10 @@ private fun App(c: Container) {
     val pending by c.pendingOpen.collectAsState()
     LaunchedEffect(pending) {
         pending?.let { id ->
-            nav.navigate("chat/$id") { launchSingleTop = true }
+            // Over whatever is open, a chat included: back to the list, then
+            // that chat. "Single top" kept a chat already on screen there,
+            // so a notification for another chat opened the wrong one.
+            nav.navigate("chat/$id") { popUpTo("main") }
             c.pendingOpen.value = null
         }
     }

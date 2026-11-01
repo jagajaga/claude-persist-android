@@ -169,11 +169,11 @@ private fun ReplyBar(title: String, onCancel: () -> Unit, onSend: (String) -> Un
     }
 }
 
-/** Whose messages follow: tap to reply to that chat, ↗ to open it. */
+/** Whose messages follow: tap the name to open that chat; tap a message to reply from here. */
 @Composable
 private fun ChatHeader(entry: FeedEntry.Header, working: Boolean, picked: Boolean, onPick: () -> Unit, onOpen: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onPick).padding(top = 8.dp, bottom = 2.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(top = 8.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         StatusDot(working = working)
@@ -186,9 +186,9 @@ private fun ChatHeader(entry: FeedEntry.Header, working: Boolean, picked: Boolea
             modifier = Modifier.weight(1f),
         )
         Text(clock(entry.ts), style = Type.tiny)
-        Box(Modifier.size(32.dp).clickable(onClick = onOpen), contentAlignment = Alignment.Center) {
-            Text("↗", style = Type.body.copy(color = Palette.accent))
-        }
+        Spacer(Modifier.width(6.dp))
+        Text("Reply", style = Type.tiny.copy(color = if (picked) Palette.accent else Palette.muted, fontWeight = FontWeight.SemiBold), modifier = Modifier.clickable(onClick = onPick).padding(horizontal = 6.dp, vertical = 8.dp))
+        Text("Open ›", style = Type.tiny.copy(color = Palette.accent, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(start = 2.dp, top = 8.dp, bottom = 8.dp))
     }
     HorizontalDivider(color = Palette.border)
 }
