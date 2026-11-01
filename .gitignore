@@ -7,3 +7,4 @@ local.properties
 *.p12
 *.jks
 captures/
+google-services.json

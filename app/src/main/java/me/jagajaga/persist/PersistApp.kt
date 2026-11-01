@@ -9,6 +9,7 @@ import android.webkit.CookieManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import me.jagajaga.persist.data.Store
 import me.jagajaga.persist.net.GatewayClient
 import java.io.File
@@ -42,6 +43,16 @@ class Settings(context: Context) {
     /** The background connection runs while either kind of notification is on (see NotifyService). */
     val notify: Boolean get() = notifyNeedsMe || notifyDone
 
+    /** This phone's Firebase token, once Google has given one. */
+    var pushToken: String?
+        get() = prefs.getString("pushToken", null)
+        set(value) = prefs.edit().putString("pushToken", value).apply()
+
+    /** The server took the token and can send through Google: no background connection needed. */
+    var pushActive: Boolean
+        get() = prefs.getBoolean("pushActive", false)
+        set(value) = prefs.edit().putBoolean("pushActive", value).apply()
+
     /** The gateway over plain HTTP, through the same proxy and login. */
     val httpBase: String get() = "$baseUrl/proxy/$gatewayPort"
 
@@ -56,6 +67,7 @@ class Settings(context: Context) {
 
 /** The app's long-lived parts: one connection and one store for the process. */
 class Container(context: Context) {
+    private val app: Context = context.applicationContext
     val settings = Settings(context)
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -84,6 +96,36 @@ class Container(context: Context) {
     init {
         watchNetwork(context)
         gateway.start()
+        // Every connect: the server may be new, or may have lost the token.
+        scope.launch { gateway.connected.collect { registerPush() } }
+    }
+
+    /** Google gave this phone a token (first launch, or a new one): tell the server. */
+    fun pushToken(token: String) {
+        if (settings.pushToken == token && settings.pushActive) return
+        settings.pushToken = token
+        scope.launch { registerPush() }
+    }
+
+    /**
+     * Hand the token to the server. It answers whether it can send through
+     * Google; an older server does not know the request at all. Either way
+     * the background connection runs exactly when Google will not do.
+     */
+    private suspend fun registerPush() {
+        val token = settings.pushToken ?: return
+        val active = try {
+            val answer = gateway.request("registerPush", mapOf("token" to kotlinx.serialization.json.JsonPrimitive(token)))
+            ((answer as? kotlinx.serialization.json.JsonObject)?.get("enabled") as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
+        } catch (e: me.jagajaga.persist.net.GatewayException) {
+            false
+        } catch (e: Exception) {
+            return // no answer: try again on the next connect
+        }
+        if (active == settings.pushActive) return
+        settings.pushActive = active
+        // Starting a foreground service from the background can be refused; the next launch sorts it out.
+        runCatching { me.jagajaga.persist.notify.Notifications.follow(app) }
     }
 
     /**

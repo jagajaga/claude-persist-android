@@ -129,12 +129,36 @@ object Notifications {
         val requestId = (inner?.get("requestId") as? kotlinx.serialization.json.JsonPrimitive)?.content
         if (requestId != null && (type == "permission_request" || type == "question_request")) pending.asked(sessionId, requestId)
         if (requestId != null && type == "permission_resolved") {
-            if (pending.answered(sessionId, requestId)) NotificationManagerCompat.from(context).cancel(idFor(sessionId, NotifyRules.ATTENTION))
+            answered(context, sessionId, requestId)
             return
         }
-        if (AppVisibility.visible && c.store.isOpen(sessionId)) return
         val title = c.store.sessions.value.firstOrNull { it.id == sessionId }?.title ?: ""
         val notice = NotifyRules.notice(title, event) ?: return
+        post(context, sessionId, notice)
+    }
+
+    /** A request was answered, anywhere: down with "needs you" once nothing in the chat waits. */
+    fun answered(context: Context, sessionId: String, requestId: String?) {
+        if (requestId == null || pending.answered(sessionId, requestId)) NotificationManagerCompat.from(context).cancel(idFor(sessionId, NotifyRules.ATTENTION))
+    }
+
+    /**
+     * Run the background connection only when it is the way notifications
+     * arrive: switched on, and the server not sending them through Google.
+     */
+    fun follow(context: Context) {
+        val s = context.container.settings
+        if (s.notify && !s.pushActive) NotifyService.start(context) else NotifyService.stop(context)
+    }
+
+    /**
+     * Show it -- from the background connection or from Google alike --
+     * unless you are looking at that very chat, or switched that kind off.
+     */
+    fun post(context: Context, sessionId: String, notice: NotifyRules.Notice, requestId: String? = null) {
+        val c = context.container
+        if (requestId != null && notice.channel == NotifyRules.ATTENTION) pending.asked(sessionId, requestId)
+        if (AppVisibility.visible && c.store.isOpen(sessionId)) return
         // Each kind has its own switch in Settings.
         val wanted = if (notice.channel == NotifyRules.ATTENTION) c.settings.notifyNeedsMe else c.settings.notifyDone
         if (!wanted) return

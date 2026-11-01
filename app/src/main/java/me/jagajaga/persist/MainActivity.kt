@@ -93,7 +93,8 @@ class MainActivity : ComponentActivity() {
         // Only a fresh launch: an activity recreated (rotation, back from recents)
         // still carries the old notification's intent and would jump there again.
         if (savedInstanceState == null) c.pendingOpen.value = intent?.getStringExtra(me.jagajaga.persist.notify.Notifications.EXTRA_CHAT)
-        if (c.settings.notify) me.jagajaga.persist.notify.NotifyService.start(this)
+        me.jagajaga.persist.notify.Notifications.follow(this)
+        me.jagajaga.persist.notify.Push.fetchToken(applicationContext) { c.pushToken(it) }
         setContent { PersistTheme { App(c) } }
     }
 
@@ -440,8 +441,8 @@ private fun UpdateSection(c: Container) {
 
 /**
  * Two switches: when a chat needs you (a permission like "Allow Bash?", or a
- * question), and when a turn finishes. Either keeps a background connection
- * so they arrive with the app closed.
+ * question), and when a turn finishes. They arrive through Google when the
+ * server sends them that way, and over a background connection otherwise.
  */
 @Composable
 private fun NotifySection(c: Container) {
@@ -451,7 +452,7 @@ private fun NotifySection(c: Container) {
     fun apply() {
         c.settings.notifyNeedsMe = needsMe
         c.settings.notifyDone = done
-        if (c.settings.notify) me.jagajaga.persist.notify.NotifyService.start(context) else me.jagajaga.persist.notify.NotifyService.stop(context)
+        me.jagajaga.persist.notify.Notifications.follow(context)
     }
     // Asked for once, the first time either switch goes on.
     var pendingSwitch by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
@@ -473,7 +474,13 @@ private fun NotifySection(c: Container) {
         Text("Notifications", style = Type.small.copy(fontWeight = FontWeight.SemiBold))
         NotifyRow("When Claude needs me", "A permission to allow (\"Allow Bash?\") or a question to answer", needsMe) { want -> switch(want) { needsMe = it } }
         NotifyRow("When a turn finishes", "With the first line of what Claude did", done) { want -> switch(want) { done = it } }
-        if (needsMe || done) Text("Keeps a connection open while the app is closed; Android shows a small notification for that.", style = Type.tiny)
+        if (needsMe || done) {
+            Text(
+                if (c.settings.pushActive) "Delivered by Google, so they arrive with the app closed and nothing stays running."
+                else "Keeps a connection open while the app is closed; Android shows a small notification for that.",
+                style = Type.tiny,
+            )
+        }
     }
 }
 
