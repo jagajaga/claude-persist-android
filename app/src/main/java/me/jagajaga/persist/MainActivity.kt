@@ -106,10 +106,12 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         me.jagajaga.persist.notify.AppVisibility.visible = true
+        container.onForeground()
     }
 
     override fun onStop() {
         me.jagajaga.persist.notify.AppVisibility.visible = false
+        container.onBackground()
         super.onStop()
     }
 

@@ -124,6 +124,9 @@ class GatewayClient(
         loop = null
         socket?.cancel()
         socket = null
+        failPending()
+        // Not Online any more: a request made now waits for the next start.
+        _state.value = ConnectionState.Connecting
     }
 
     /** The network came back, the app came to the front, or login finished: try now. */

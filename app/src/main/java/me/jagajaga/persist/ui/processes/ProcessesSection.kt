@@ -77,7 +77,7 @@ fun ProcessesSection(store: Store) {
     }
     LaunchedEffect(refreshTick) {
         while (true) {
-            refresh()
+            if (me.jagajaga.persist.notify.AppVisibility.visible) refresh()
             delay(POLL_MS)
         }
     }

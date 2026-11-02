@@ -50,6 +50,7 @@ class NotifyService : Service() {
         } else {
             startForeground(Notifications.ONGOING_ID, ongoing)
         }
+        running = true
         val c = container
         c.store.wantFeed(true)
         c.gateway.start()
@@ -61,12 +62,18 @@ class NotifyService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onDestroy() {
+        running = false
         container.store.wantFeed(false)
+        // Google brings notifications now, or they were switched off: no reason to stay connected off screen.
+        container.pauseIfIdle()
         scope.cancel()
         super.onDestroy()
     }
 
     companion object {
+        @Volatile
+        var running = false
+
         fun start(context: Context) {
             context.startForegroundService(Intent(context, NotifyService::class.java))
         }

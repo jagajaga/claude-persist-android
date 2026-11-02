@@ -9,7 +9,9 @@ import android.webkit.CookieManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import me.jagajaga.persist.net.ConnectionState
 import me.jagajaga.persist.data.Store
 import me.jagajaga.persist.net.GatewayClient
 import java.io.File
@@ -95,9 +97,45 @@ class Container(context: Context) {
 
     init {
         watchNetwork(context)
-        gateway.start()
+        // Not started here: a push from Google starts the process too, and
+        // must not open a connection that then streams every chat to a phone
+        // in a pocket. The screen, or the background service, starts it.
         // Every connect: the server may be new, or may have lost the token.
         scope.launch { gateway.connected.collect { registerPush() } }
+    }
+
+    @Volatile
+    private var onScreen = false
+    private var pauseJob: kotlinx.coroutines.Job? = null
+
+    /** The app came to the front: connect now. */
+    fun onForeground() {
+        onScreen = true
+        pauseJob?.cancel()
+        gateway.start()
+        gateway.reconnectNow()
+    }
+
+    /**
+     * The app left the screen. Unless the background service is what brings
+     * notifications, the connection closes: open, it carried every word of
+     * every open chat to a phone nobody was looking at, and kept its radio
+     * awake for hours. It waits a little first -- switching apps for a moment
+     * should not reconnect -- and for anything still being sent.
+     */
+    fun onBackground() {
+        onScreen = false
+        pauseJob?.cancel()
+        pauseJob = scope.launch {
+            kotlinx.coroutines.delay(BACKGROUND_GRACE_MS)
+            kotlinx.coroutines.withTimeoutOrNull(SEND_GRACE_MS) { store.outgoing.first { list -> list.none { it.failed == null } } }
+            pauseIfIdle()
+        }
+    }
+
+    /** Close the connection if neither the screen nor the background service needs it. */
+    fun pauseIfIdle() {
+        if (!onScreen && !me.jagajaga.persist.notify.NotifyService.running) gateway.stop()
     }
 
     /** Google gave this phone a token (first launch, or a new one): tell the server. */
@@ -137,12 +175,18 @@ class Container(context: Context) {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
         cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = gateway.reconnectNow()
+            // Capabilities change all the time (signal, bandwidth estimates): only
+            // a link that is down is worth a retry. Resetting the backoff at every
+            // change kept a phone with no route to the server retrying nonstop.
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) gateway.reconnectNow()
+                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) && gateway.state.value !is ConnectionState.Online) gateway.reconnectNow()
             }
         })
     }
 }
+
+private const val BACKGROUND_GRACE_MS = 30_000L
+private const val SEND_GRACE_MS = 5 * 60_000L
 
 class PersistApp : Application() {
     lateinit var container: Container

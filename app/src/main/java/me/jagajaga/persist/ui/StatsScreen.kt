@@ -39,9 +39,12 @@ fun StatsScreen(store: Store) {
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         while (true) {
-            runCatching { store.stats() }
-                .onSuccess { stats = it; error = null }
-                .onFailure { error = it.message }
+            // Only while the app is on screen: off screen this asked the server every 2 s.
+            if (me.jagajaga.persist.notify.AppVisibility.visible) {
+                runCatching { store.stats() }
+                    .onSuccess { stats = it; error = null }
+                    .onFailure { error = it.message }
+            }
             delay(2000)
         }
     }

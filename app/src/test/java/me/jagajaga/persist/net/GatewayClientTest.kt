@@ -236,4 +236,22 @@ class GatewayClientTest {
         assertTrue("got ${outcome.exceptionOrNull()}", outcome.exceptionOrNull() is AnswerLostException)
         gw.stop()
     }
+
+    @Test
+    fun `stopped, it is not online, and connects again on start`() = runBlocking {
+        server.enqueue(echoingUpgrade())
+        val gw = client()
+        gw.start()
+        withTimeout(10_000) { gw.request("hello") }
+        serverSocket(gw)
+        gw.stop()
+        // Not Online: a request made now waits for the next start instead of writing to a closed socket.
+        assertTrue(gw.state.value !is ConnectionState.Online)
+        assertEquals(1, server.requestCount)
+        server.enqueue(echoingUpgrade())
+        gw.start()
+        assertEquals("again", withTimeout(10_000) { gw.request("again") }!!.jsonObject["echo"]!!.jsonPrimitive.content)
+        assertEquals(2, server.requestCount)
+        gw.stop()
+    }
 }
