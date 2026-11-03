@@ -138,6 +138,11 @@ class Container(context: Context) {
         if (!onScreen && !me.jagajaga.persist.notify.NotifyService.running) gateway.stop()
     }
 
+    /** A notification switch changed: tell the server which kinds to send. */
+    fun pushPreferencesChanged() {
+        scope.launch { registerPush() }
+    }
+
     /** Google gave this phone a token (first launch, or a new one): tell the server. */
     fun pushToken(token: String) {
         if (settings.pushToken == token && settings.pushActive) return
@@ -153,7 +158,16 @@ class Container(context: Context) {
     private suspend fun registerPush() {
         val token = settings.pushToken ?: return
         val active = try {
-            val answer = gateway.request("registerPush", mapOf("token" to kotlinx.serialization.json.JsonPrimitive(token)))
+            // Only the kinds switched on: the server sends no others, so a
+            // switched-off kind no longer wakes the phone to be thrown away.
+            val kinds = buildList {
+                if (settings.notifyNeedsMe) add(kotlinx.serialization.json.JsonPrimitive("attention"))
+                if (settings.notifyDone) add(kotlinx.serialization.json.JsonPrimitive("done"))
+            }
+            val answer = gateway.request(
+                "registerPush",
+                mapOf("token" to kotlinx.serialization.json.JsonPrimitive(token), "kinds" to kotlinx.serialization.json.JsonArray(kinds)),
+            )
             ((answer as? kotlinx.serialization.json.JsonObject)?.get("enabled") as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
         } catch (e: me.jagajaga.persist.net.GatewayException) {
             false

@@ -125,6 +125,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun App(c: Container) {
+    me.jagajaga.persist.ui.Pulse.Driver()
     val nav = rememberNavController()
     val state by c.gateway.state.collectAsState()
     val outgoing by c.store.outgoing.collectAsState()
@@ -455,6 +456,7 @@ private fun NotifySection(c: Container) {
         c.settings.notifyNeedsMe = needsMe
         c.settings.notifyDone = done
         me.jagajaga.persist.notify.Notifications.follow(context)
+        c.pushPreferencesChanged()
     }
     // Asked for once, the first time either switch goes on.
     var pendingSwitch by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }

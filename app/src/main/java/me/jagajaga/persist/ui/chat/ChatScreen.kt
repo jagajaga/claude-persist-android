@@ -636,9 +636,9 @@ private fun DiffBlock(label: String, lines: List<DiffLine>) {
 /** A reply as it arrives, with the panel's blinking caret at its end. */
 @Composable
 private fun StreamingText(text: String) {
-    var on by remember { mutableStateOf(true) }
-    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(530); on = !on } }
-    MarkdownText(text + if (on) " ▍" else "  ")
+    // A steady cursor: blinking it was part of the text, so every blink
+    // re-read and laid out the whole answer so far, twice a second.
+    MarkdownText("$text ▍")
 }
 
 /** Previews of the pictures and videos a message names, one under another. */

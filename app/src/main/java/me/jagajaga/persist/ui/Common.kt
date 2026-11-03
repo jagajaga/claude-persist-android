@@ -1,10 +1,6 @@
 package me.jagajaga.persist.ui
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,11 +21,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import me.jagajaga.persist.net.ConnectionState
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -113,18 +110,54 @@ fun StatusDot(working: Boolean, error: Boolean = false, modifier: Modifier = Mod
         working -> Palette.accent
         else -> Palette.ok
     }
-    val pulse = if (working) {
-        val transition = rememberInfiniteTransition(label = "pulse")
-        transition.animateFloat(0.35f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "alpha").value
-    } else {
-        1f
+    if (working) {
+        DisposableEffect(Unit) {
+            Pulse.users.intValue++
+            onDispose { Pulse.users.intValue-- }
+        }
     }
     Box(
         modifier
             .size(9.dp)
-            .alpha(pulse)
+            // Read while drawing, not composing: a step redraws the dot, nothing else.
+            .graphicsLayer { alpha = if (working) Pulse.alpha.floatValue else 1f }
             .background(color, CircleShape),
     )
+}
+
+/**
+ * One pulse for every working dot, in a few steps a second.
+ *
+ * Each dot ran its own smooth animation, and a smooth animation redraws the
+ * screen at the display's rate -- 60 to 120 times a second for as long as
+ * anything worked, which with agents running was all the time the app was
+ * open. Stepped and shared, the screen changes about three times a second,
+ * and not at all while nothing works.
+ */
+object Pulse {
+    val users = androidx.compose.runtime.mutableIntStateOf(0)
+    val alpha = androidx.compose.runtime.mutableFloatStateOf(1f)
+    private val steps = floatArrayOf(1f, 0.78f, 0.55f, 0.4f, 0.55f, 0.78f)
+    private const val STEP_MS = 300L
+
+    /** Runs where the app is composed; still while no dot is working. */
+    @Composable
+    fun Driver() {
+        LaunchedEffect(Unit) {
+            androidx.compose.runtime.snapshotFlow { users.intValue > 0 }.collectLatest { active ->
+                if (!active) {
+                    alpha.floatValue = 1f
+                    return@collectLatest
+                }
+                var i = 0
+                while (true) {
+                    alpha.floatValue = steps[i]
+                    i = (i + 1) % steps.size
+                    delay(STEP_MS)
+                }
+            }
+        }
+    }
 }
 
 private val clockFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
