@@ -130,10 +130,19 @@ class GatewayClient(
     }
 
     /** The network came back, the app came to the front, or login finished: try now. */
-    fun reconnectNow() {
+    fun reconnectNow(eager: Boolean = true) {
         backoff.reset()
+        // Something changed -- the app came to the front, the network came
+        // back: for a little while, failures are retried at once and shown as
+        // "connecting". A phone just woken often has no network for its first
+        // second or two, and the doubling wait had grown to "offline, retrying
+        // in 12s" by the time it had.
+        if (eager) eagerUntil = now() + EAGER_MS
         wake.trySend(Unit)
     }
+
+    @Volatile
+    private var eagerUntil = 0L
 
     private sealed interface Ended {
         data class Closed(val reason: String) : Ended
@@ -152,8 +161,9 @@ class GatewayClient(
                     wake.receive()
                 }
                 is Ended.Closed -> {
-                    val wait = backoff.next()
-                    _state.value = ConnectionState.Offline(ended.reason, now() + wait)
+                    val eager = now() < eagerUntil
+                    val wait = if (eager) EAGER_RETRY_MS else backoff.next()
+                    _state.value = if (eager) ConnectionState.Connecting else ConnectionState.Offline(ended.reason, now() + wait)
                     withTimeoutOrNull(wait) { wake.receive() }
                 }
             }
@@ -169,6 +179,12 @@ class GatewayClient(
         cookie()?.takeIf { it.isNotBlank() }?.let { builder.header("Cookie", it) }
         val ws = client.newWebSocket(builder.build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                // Opened after it was given up (the app closed it mid-handshake):
+                // it must not pass for the connection now.
+                if (finished.get() || !cont.isActive) {
+                    webSocket.cancel()
+                    return
+                }
                 socket = webSocket
                 backoff.reset()
                 _state.value = ConnectionState.Online
@@ -266,3 +282,7 @@ class GatewayClient(
         }
     }
 }
+
+/** How long after a sign of change failures are retried at once. */
+private const val EAGER_MS = 15_000L
+private const val EAGER_RETRY_MS = 700L

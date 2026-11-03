@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,6 +51,16 @@ fun ConnectionBanner(
     onSendNow: () -> Unit = {},
 ) {
     if (state is ConnectionState.Online && queued == 0) return
+    // Reconnecting on opening the app takes about a second: not worth a
+    // banner flashing up every time. Shown if it takes longer.
+    var patient by remember { mutableStateOf(state !is ConnectionState.Connecting) }
+    LaunchedEffect(state is ConnectionState.Connecting) {
+        if (state is ConnectionState.Connecting) {
+            delay(2_000)
+        }
+        patient = true
+    }
+    if (!patient && queued == 0) return
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(state) {
         while (true) {

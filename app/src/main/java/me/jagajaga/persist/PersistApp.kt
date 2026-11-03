@@ -175,11 +175,16 @@ class Container(context: Context) {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
         cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = gateway.reconnectNow()
+            // Coming back to the front, the app's network is unblocked a moment
+            // after it starts: that moment is when to connect, not a backoff later.
+            override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+                if (!blocked) gateway.reconnectNow()
+            }
             // Capabilities change all the time (signal, bandwidth estimates): only
             // a link that is down is worth a retry. Resetting the backoff at every
             // change kept a phone with no route to the server retrying nonstop.
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) && gateway.state.value !is ConnectionState.Online) gateway.reconnectNow()
+                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) && gateway.state.value !is ConnectionState.Online) gateway.reconnectNow(eager = false)
             }
         })
     }

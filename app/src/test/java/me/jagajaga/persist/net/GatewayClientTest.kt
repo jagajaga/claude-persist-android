@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -252,6 +253,32 @@ class GatewayClientTest {
         gw.start()
         assertEquals("again", withTimeout(10_000) { gw.request("again") }!!.jsonObject["echo"]!!.jsonPrimitive.content)
         assertEquals(2, server.requestCount)
+        gw.stop()
+    }
+
+    @Test
+    fun `just after a sign of change, a failed attempt is retried as connecting, not shown offline`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(502))
+        server.enqueue(echoingUpgrade())
+        val gw = client()
+        val seen = java.util.Collections.synchronizedList(mutableListOf<ConnectionState>())
+        val watcher = scope.launch { gw.state.collect { seen += it } }
+        gw.reconnectNow()
+        gw.start()
+        assertEquals("hello", withTimeout(10_000) { gw.request("hello") }!!.jsonObject["echo"]!!.jsonPrimitive.content)
+        assertEquals(2, server.requestCount)
+        assertTrue("states: $seen", seen.none { it is ConnectionState.Offline })
+        watcher.cancel()
+        gw.stop()
+    }
+
+    @Test
+    fun `with nothing changed, a failed attempt says offline`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(502))
+        server.enqueue(echoingUpgrade())
+        val gw = client()
+        gw.start()
+        withTimeout(10_000) { gw.state.first { it is ConnectionState.Offline } }
         gw.stop()
     }
 }
