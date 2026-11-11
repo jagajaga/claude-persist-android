@@ -136,6 +136,15 @@ object ThreadModel {
             .map { it.index to (it.value as ThreadItem.User).text }
             .reversed()
 
+    /**
+     * Only the newest stretch of thinking is shown: the earlier ones are what
+     * Claude moved past, and a thread of them read as noise between the work.
+     */
+    fun onlyLastThinking(items: List<ThreadItem>): List<ThreadItem> {
+        val last = items.indexOfLast { it is ThreadItem.Thinking }
+        return if (last < 0) items else items.filterIndexed { i, it -> it !is ThreadItem.Thinking || i == last }
+    }
+
     fun build(events: List<JsonObject>, outgoing: List<OutgoingMessage>): List<ThreadItem> {
         val items = mutableListOf<ThreadItem>()
         val toolIndex = HashMap<String, Int>()
@@ -241,7 +250,7 @@ object ThreadModel {
                 failed = message.failed,
             )
         }
-        return items
+        return onlyLastThinking(items)
     }
 
     /** "01:18 · 8.4s · 1.2k tokens", the panel's turn footer. */

@@ -182,7 +182,7 @@ class ThreadModelTest {
     }
 
     @Test
-    fun `thinking is its own item before the answer; a signature-only block is not shown`() {
+    fun `thinking is its own item before the answer, and a signature-only block is not shown`() {
         val items = ThreadModel.build(
             listOf(
                 ev("""{"type":"thinking","text":"Counting the solutions."}"""),
@@ -193,5 +193,20 @@ class ThreadModelTest {
         )
         assertEquals(listOf("Thinking", "Assistant"), items.map { it::class.simpleName })
         assertEquals("Counting the solutions.", (items[0] as ThreadItem.Thinking).text)
+    }
+
+    @Test
+    fun `only the newest thinking is shown`() {
+        val items = ThreadModel.build(
+            listOf(
+                ev("""{"type":"thinking","text":"First thought."}"""),
+                ev("""{"type":"assistant_text","text":"answer"}"""),
+                ev("""{"type":"thinking","text":"Second thought."}"""),
+                ev("""{"type":"assistant_text","text":"more"}"""),
+            ),
+            emptyList(),
+        )
+        assertEquals(listOf("Second thought."), items.filterIsInstance<ThreadItem.Thinking>().map { it.text })
+        assertEquals(3, items.size)
     }
 }

@@ -198,7 +198,10 @@ fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
     val streaming by store.streaming(sessionId).collectAsState()
     val thinking by store.thinking(sessionId).collectAsState()
     val mine = remember(outgoing, sessionId) { outgoing.filter { it.sessionId == sessionId } }
-    val items = remember(events, mine) { ThreadModel.build(events, mine) }
+    val built = remember(events, mine) { ThreadModel.build(events, mine) }
+    // Thinking live is the newest: the last finished stretch steps aside for it.
+    val thinkingLive = thinking.isNotBlank()
+    val items = remember(built, thinkingLive) { if (thinkingLive) built.filter { it !is ThreadItem.Thinking } else built }
     val scope = rememberCoroutineScope()
 
     Column(modifier) {
