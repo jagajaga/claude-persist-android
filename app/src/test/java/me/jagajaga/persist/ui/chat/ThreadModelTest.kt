@@ -209,4 +209,17 @@ class ThreadModelTest {
         assertEquals(listOf("Second thought."), items.filterIsInstance<ThreadItem.Thinking>().map { it.text })
         assertEquals(3, items.size)
     }
+
+    @Test
+    fun `a failed login offers to sign in to that account, the default one by name`() {
+        val items = ThreadModel.build(
+            listOf(
+                ev("""{"type":"status","status":"error","detail":"Not signed in","action":"signin","account":"blooper"}"""),
+                ev("""{"type":"status","status":"error","detail":"Not signed in","action":"signin"}"""),
+                ev("""{"type":"status","status":"error","detail":"Something else"}"""),
+            ),
+            emptyList(),
+        )
+        assertEquals(listOf("blooper", "default", null), items.map { (it as ThreadItem.Notice).signIn })
+    }
 }

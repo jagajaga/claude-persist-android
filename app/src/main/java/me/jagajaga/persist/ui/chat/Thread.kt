@@ -62,7 +62,8 @@ sealed interface ThreadItem {
         val resolved: Boolean,
         val answers: Map<String, String>,
     ) : ThreadItem
-    data class Notice(override val key: String, val text: String, val error: Boolean) : ThreadItem
+    /** [signIn]: the account whose login failed ("default" for the default one), offered as a button. */
+    data class Notice(override val key: String, val text: String, val error: Boolean, val signIn: String? = null) : ThreadItem
 }
 
 data class DiffLine(val sign: Char, val text: String)
@@ -233,7 +234,8 @@ object ThreadModel {
                 "status" -> {
                     val status = event.str("status")
                     val detail = event.str("detail")
-                    if (!detail.isNullOrBlank() && status == "error") items += ThreadItem.Notice(key, detail, true)
+                    val signIn = if (event.str("action") == "signin") event.str("account") ?: "default" else null
+                    if (!detail.isNullOrBlank() && status == "error") items += ThreadItem.Notice(key, detail, true, signIn)
                     else if (!detail.isNullOrBlank()) items += ThreadItem.Notice(key, detail, false)
                 }
             }

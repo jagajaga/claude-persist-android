@@ -73,8 +73,8 @@ object Options {
 
     /** What an account row says when it cannot be used as it stands. */
     fun accountLabel(account: AccountInfo): String = when {
-        !account.signedIn -> "${account.name} — not signed in"
-        account.loginExpired -> "${account.name} — login expired"
+        !account.signedIn -> "${account.name} — not signed in, tap to sign in"
+        account.loginExpired -> "${account.name} — login expired, tap to sign in"
         else -> account.name
     }
 

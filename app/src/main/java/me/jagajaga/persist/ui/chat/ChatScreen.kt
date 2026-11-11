@@ -197,6 +197,9 @@ fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
     val outgoing by store.outgoing.collectAsState()
     val streaming by store.streaming(sessionId).collectAsState()
     val thinking by store.thinking(sessionId).collectAsState()
+    // A notice's "Sign in to <account>": the same dialog the model sheet opens, for that account.
+    var signInTo by remember { mutableStateOf<String?>(null) }
+    signInTo?.let { account -> SignInDialog(store, account = account, onDone = { signInTo = null }) }
     val mine = remember(outgoing, sessionId) { outgoing.filter { it.sessionId == sessionId } }
     val built = remember(events, mine) { ThreadModel.build(events, mine) }
     // Thinking live is the newest: the last finished stretch steps aside for it.
@@ -301,6 +304,7 @@ fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
                     },
                     onRetry = store::retry,
                     onDiscard = store::discard,
+                    onSignIn = { signInTo = it },
                 )
             }
             if (thinking.isNotBlank()) item(key = "thinking-live") { ThinkingCard(thinking, live = true, agent = null, key = "thinking-live") }
@@ -324,6 +328,7 @@ fun ThreadItemView(
     onAnswers: (requestId: String, answers: Map<String, String>) -> Unit,
     onRetry: (clientMessageId: String) -> Unit = {},
     onDiscard: (clientMessageId: String) -> Unit = {},
+    onSignIn: (account: String) -> Unit = {},
 ) {
     when (item) {
         is ThreadItem.User -> UserBubble(item, onRetry, onDiscard)
@@ -333,10 +338,20 @@ fun ThreadItemView(
         is ThreadItem.Footer -> Footer(item)
         is ThreadItem.Permission -> PermissionCard(item) { allow -> onPermission(item.requestId, allow) }
         is ThreadItem.Question -> QuestionCard(item) { answers -> onAnswers(item.requestId, answers) }
-        is ThreadItem.Notice -> Text(
-            item.text,
-            style = Type.small.copy(color = if (item.error) Palette.error else Palette.muted),
-        )
+        is ThreadItem.Notice -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(item.text, style = Type.small.copy(color = if (item.error) Palette.error else Palette.muted))
+            // A login that failed: sign in again right here, as the panel offers.
+            item.signIn?.let { account ->
+                Text(
+                    if (account == "default") "Sign in to Claude" else "Sign in to $account",
+                    style = Type.small.copy(color = Color.White, fontWeight = FontWeight.SemiBold),
+                    modifier = Modifier
+                        .background(Palette.accent, RoundedCornerShape(50))
+                        .clickable { onSignIn(account) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
+        }
     }
 }
 

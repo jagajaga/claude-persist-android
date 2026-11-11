@@ -53,8 +53,8 @@ class OptionsTest {
 
     @Test
     fun `an account that cannot be used says why`() {
-        assertEquals("a — not signed in", Options.accountLabel(AccountInfo("a", signedIn = false)))
-        assertEquals("b — login expired", Options.accountLabel(AccountInfo("b", loginExpired = true)))
+        assertEquals("a — not signed in, tap to sign in", Options.accountLabel(AccountInfo("a", signedIn = false)))
+        assertEquals("b — login expired, tap to sign in", Options.accountLabel(AccountInfo("b", loginExpired = true)))
         assertEquals("c", Options.accountLabel(AccountInfo("c")))
     }
 

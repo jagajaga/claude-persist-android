@@ -55,6 +55,8 @@ fun OptionsSheet(store: Store, session: SessionInfo, onDismiss: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var switchTo by remember { mutableStateOf<AccountInfo?>(null) }
     var signingIn by remember { mutableStateOf(false) }
+    // An account whose login failed or lapsed: tapping it signs it in again rather than switching to a dead login.
+    var signInAgain by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { store.refreshOptions() }
 
     fun act(block: suspend () -> Unit) {
@@ -99,7 +101,10 @@ fun OptionsSheet(store: Store, session: SessionInfo, onDismiss: () -> Unit) {
                     note = Options.usage(account, now),
                     warn = !account.signedIn || account.loginExpired,
                 ) {
-                    if (!account.active) switchTo = account
+                    when {
+                        !account.signedIn || account.loginExpired -> signInAgain = if (account.configDir == null) "default" else account.name
+                        !account.active -> switchTo = account
+                    }
                 }
             }
             val signedInAlready = accounts.any { it.signedIn }
@@ -125,11 +130,16 @@ fun OptionsSheet(store: Store, session: SessionInfo, onDismiss: () -> Unit) {
     }
 
     if (signingIn) SignInDialog(store, onDone = { signingIn = false })
+    signInAgain?.let { name -> SignInDialog(store, account = name, onDone = { signInAgain = null; scope.launch { store.refreshOptions() } }) }
 }
 
-/** Start a sign-in on the server, open its page here, paste the code back. */
+/**
+ * Start a sign-in on the server, open its page here, paste the code back.
+ * With [account] given (a login that failed, an expired account tapped), it
+ * signs that one in again; otherwise it asks which.
+ */
 @Composable
-private fun SignInDialog(store: Store, onDone: () -> Unit) {
+internal fun SignInDialog(store: Store, onDone: () -> Unit, account: String? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
@@ -141,10 +151,20 @@ private fun SignInDialog(store: Store, onDone: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDone,
-        title = { Text(if (loginId == null) "Sign in to Claude" else "Paste the code") },
+        title = {
+            Text(
+                when {
+                    loginId != null -> "Paste the code"
+                    account == null || account == "default" -> "Sign in to Claude"
+                    else -> "Sign in to $account"
+                },
+            )
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (loginId == null) {
+                if (loginId == null && account != null) {
+                    Text("A page opens to sign in. Then paste the code it shows here.", style = Type.small)
+                } else if (loginId == null) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { useDefault = true }) {
                         androidx.compose.material3.RadioButton(selected = useDefault, onClick = { useDefault = true })
                         Column {
@@ -176,7 +196,7 @@ private fun SignInDialog(store: Store, onDone: () -> Unit) {
             }
         },
         confirmButton = {
-            val nameOk = useDefault || (Regex("^[a-z0-9-]+$").matches(name) && name != "default")
+            val nameOk = account != null || useDefault || (Regex("^[a-z0-9-]+$").matches(name) && name != "default")
             TextButton(enabled = !busy && (loginId != null || nameOk), onClick = {
                 busy = true
                 message = null
@@ -184,7 +204,7 @@ private fun SignInDialog(store: Store, onDone: () -> Unit) {
                     runCatching {
                         val id = loginId
                         if (id == null) {
-                            val started = store.startLogin(if (useDefault) "default" else name.trim())
+                            val started = store.startLogin(account ?: if (useDefault) "default" else name.trim())
                             loginId = started.loginId
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(started.url)))
                         } else {
