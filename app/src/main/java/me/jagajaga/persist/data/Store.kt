@@ -129,6 +129,8 @@ class Store(
                 if (logFor(sessionId).mergeLive(event, attached = sessionId in attached)) publish(sessionId)
                 val type = typeOf(event)
                 if (type == "assistant_text") deltaFor(sessionId).value = ""
+                // The finished block, an answer, a tool call or the end of the turn: live thinking is over.
+                if (type in THINKING_ENDS && !isFromAgent(event)) thinkingFor(sessionId).value = ""
                 if (type == "user_message") {
                     // The server has it: whatever the outbox still holds for it is done.
                     clientIdOf(event)?.let { confirmSent(it) }
@@ -142,7 +144,13 @@ class Store(
             "delta" -> {
                 val sessionId = message["sessionId"]?.jsonPrimitive?.contentOrNull ?: return
                 val text = message["text"]?.jsonPrimitive?.contentOrNull ?: return
+                thinkingFor(sessionId).value = ""
                 deltaFor(sessionId).value += text
+            }
+            "thinking_delta" -> {
+                val sessionId = message["sessionId"]?.jsonPrimitive?.contentOrNull ?: return
+                val text = message["text"]?.jsonPrimitive?.contentOrNull ?: return
+                thinkingFor(sessionId).value += text
             }
             "sessions_changed" -> scope.launch { runCatching { refreshSessions() } }
             "agents" -> {
@@ -186,6 +194,9 @@ class Store(
 
     fun events(sessionId: String): StateFlow<List<JsonObject>> = flowFor(sessionId)
     fun streaming(sessionId: String): StateFlow<String> = deltaFor(sessionId)
+
+    /** Claude's thinking as it streams, until its finished block lands. */
+    fun thinking(sessionId: String): StateFlow<String> = thinkingFor(sessionId)
 
     /**
      * Scroll-back: the page before the oldest event held. Returns whether
@@ -712,6 +723,14 @@ class Store(
     private fun deltaFor(sessionId: String): MutableStateFlow<String> =
         deltaFlows.getOrPut(sessionId) { MutableStateFlow("") }
 
+    private val thinkingFlows = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<String>>()
+
+    private fun thinkingFor(sessionId: String): MutableStateFlow<String> =
+        thinkingFlows.getOrPut(sessionId) { MutableStateFlow("") }
+
+    private fun isFromAgent(event: JsonObject): Boolean =
+        ((event["event"] as? JsonObject)?.get("agent") as? JsonPrimitive)?.contentOrNull != null
+
     private fun publish(sessionId: String) {
         val log = logFor(sessionId)
         // Everything scrolled back through stays on screen; only the copy on
@@ -757,6 +776,9 @@ class Store(
         /** Raw bytes per HTTP upload request. */
         private const val HTTP_CHUNK = 4 * 1024 * 1024
         private const val SAVE_DEBOUNCE_MS = 400L
+        /** After these, Claude is no longer thinking: the live thinking line goes. */
+        val THINKING_ENDS = setOf("thinking", "assistant_text", "tool_use", "result", "status")
+
         val FEED_TYPES = setOf(
             "user_message", "assistant_text", "tool_use", "tool_result",
             "permission_request", "question_request", "permission_resolved", "result",

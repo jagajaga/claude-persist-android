@@ -29,6 +29,8 @@ sealed interface ThreadItem {
         val failed: String? = null,
     ) : ThreadItem
     data class Assistant(override val key: String, val text: String, val agent: String?) : ThreadItem
+    /** Claude's summary of its thinking: collapsed, opened with a tap. */
+    data class Thinking(override val key: String, val text: String, val agent: String?) : ThreadItem
     data class Tool(
         override val key: String,
         val name: String,
@@ -157,6 +159,7 @@ object ThreadModel {
                     items += ThreadItem.User(key, event.str("text") ?: "", images, sending = false, paths = paths)
                 }
                 "assistant_text" -> items += ThreadItem.Assistant(key, event.str("text") ?: "", agent)
+                "thinking" -> event.str("text")?.takeIf { it.isNotBlank() }?.let { items += ThreadItem.Thinking(key, it, agent) }
                 "tool_use" -> {
                     val name = event.str("toolName") ?: "tool"
                     val input = event["input"]

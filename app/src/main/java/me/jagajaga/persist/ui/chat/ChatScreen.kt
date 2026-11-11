@@ -196,6 +196,7 @@ fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
     val events by store.events(sessionId).collectAsState()
     val outgoing by store.outgoing.collectAsState()
     val streaming by store.streaming(sessionId).collectAsState()
+    val thinking by store.thinking(sessionId).collectAsState()
     val mine = remember(outgoing, sessionId) { outgoing.filter { it.sessionId == sessionId } }
     val items = remember(events, mine) { ThreadModel.build(events, mine) }
     val scope = rememberCoroutineScope()
@@ -245,7 +246,7 @@ fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
             }
         }
         // Follow the conversation while pinned to the bottom.
-        LaunchedEffect(items.size, streaming.length, session?.working) {
+        LaunchedEffect(items.size, streaming.length, thinking.length, session?.working) {
             if (landed && pinned) toBottom()
         }
         // The keyboard opening or closing resizes the list from below. At the
@@ -299,6 +300,7 @@ fun ChatThread(store: Store, sessionId: String, modifier: Modifier = Modifier) {
                     onDiscard = store::discard,
                 )
             }
+            if (thinking.isNotBlank()) item(key = "thinking-live") { ThinkingCard(thinking, live = true, agent = null, key = "thinking-live") }
             if (streaming.isNotBlank()) item(key = "streaming") { StreamingText(streaming) }
             if (session?.working == true) item(key = "working") {
                 WorkingRow(ThreadModel.turnStart(events), onStop = { scope.launch { runCatching { store.interrupt(sessionId) } } })
@@ -324,6 +326,7 @@ fun ThreadItemView(
         is ThreadItem.User -> UserBubble(item, onRetry, onDiscard)
         is ThreadItem.Assistant -> AssistantText(item)
         is ThreadItem.Tool -> ToolCard(item)
+        is ThreadItem.Thinking -> ThinkingCard(item.text, live = false, agent = item.agent, key = item.key)
         is ThreadItem.Footer -> Footer(item)
         is ThreadItem.Permission -> PermissionCard(item) { allow -> onPermission(item.requestId, allow) }
         is ThreadItem.Question -> QuestionCard(item) { answers -> onAnswers(item.requestId, answers) }
@@ -695,19 +698,63 @@ private fun Chip(text: String, onClick: (() -> Unit)? = null) {
 private val FILE_TOOLS = setOf("Read", "Write", "Edit", "MultiEdit", "NotebookEdit")
 
 /** Like the panel's: dot, agent, bold tool name, the command or path in mono. Tap for detail. */
+/**
+ * The frame of a card in the thread -- a tool call, a stretch of thinking:
+ * one shape for one kind of thing, so restyling it restyles them all.
+ */
 @Composable
-private fun ToolCard(item: ThreadItem.Tool) {
-    var open by remember(item.key) { mutableStateOf(false) }
+private fun CardFrame(agent: String?, onTap: () -> Unit, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
-            .border(1.dp, item.agent?.let { agentColor(it).copy(alpha = 0.6f) } ?: Palette.border, RoundedCornerShape(12.dp))
+            .border(1.dp, agent?.let { agentColor(it).copy(alpha = 0.6f) } ?: Palette.border, RoundedCornerShape(12.dp))
             .background(Palette.surface, RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
-            .agentStripe(item.agent)
-            .clickable { open = !open }
+            .agentStripe(agent)
+            .clickable(onClick = onTap)
             .padding(horizontal = 14.dp, vertical = 11.dp),
-    ) {
+        content = content,
+    )
+}
+
+/**
+ * Claude's thinking, as the summary Claude gives of it: one line -- the
+ * latest of it while it streams -- and the whole of it on a tap.
+ */
+@Composable
+private fun ThinkingCard(text: String, live: Boolean, agent: String?, key: String) {
+    var open by remember(key) { mutableStateOf(false) }
+    val line = remember(text, live) {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        (if (live) lines.lastOrNull() else lines.firstOrNull()).orEmpty().replace("**", "")
+    }
+    CardFrame(agent, onTap = { open = !open }) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Live, it pulses like anything working; done, a quiet grey dot: neither success nor failure.
+            if (live) StatusDot(working = true) else Box(Modifier.size(9.dp).background(Palette.faint, CircleShape))
+            agent?.let { AgentChip(it) }
+            Text("Thinking", style = Type.body.copy(fontWeight = FontWeight.SemiBold))
+            // Open, the text below says it all: the same line here would read twice.
+            Text(
+                if (open) "" else line,
+                style = Type.small.copy(color = Palette.muted, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (open) {
+            Spacer(Modifier.size(8.dp))
+            if (live) Text(text.trim(), style = Type.body.copy(color = Palette.muted))
+            else MarkdownText(text, tone = Palette.muted)
+        }
+    }
+}
+
+@Composable
+private fun ToolCard(item: ThreadItem.Tool) {
+    var open by remember(item.key) { mutableStateOf(false) }
+    CardFrame(item.agent, onTap = { open = !open }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusDot(working = !item.done, error = item.isError)
             item.agent?.let { AgentChip(it) }

@@ -180,4 +180,18 @@ class ThreadModelTest {
         )
         assertEquals(listOf("/up/a.png", "/w/b.jpg", "/w/c.mp4"), ThreadModel.media(ThreadModel.build(events, emptyList())))
     }
+
+    @Test
+    fun `thinking is its own item before the answer; a signature-only block is not shown`() {
+        val items = ThreadModel.build(
+            listOf(
+                ev("""{"type":"thinking","text":"Counting the solutions."}"""),
+                ev("""{"type":"thinking","text":"   "}"""),
+                ev("""{"type":"assistant_text","text":"54"}"""),
+            ),
+            emptyList(),
+        )
+        assertEquals(listOf("Thinking", "Assistant"), items.map { it::class.simpleName })
+        assertEquals("Counting the solutions.", (items[0] as ThreadItem.Thinking).text)
+    }
 }

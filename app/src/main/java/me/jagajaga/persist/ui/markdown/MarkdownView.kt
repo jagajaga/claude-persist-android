@@ -66,7 +66,7 @@ private fun AnnotatedString.Builder.appendInlines(inlines: List<Inline>, resolve
 
 /** Claude's reply, laid out the way the panel lays it out. */
 @Composable
-fun MarkdownText(source: String, modifier: Modifier = Modifier, baseDir: String? = null) {
+fun MarkdownText(source: String, modifier: Modifier = Modifier, baseDir: String? = null, tone: androidx.compose.ui.graphics.Color? = null) {
     val blocks = remember(source) { Markdown.parse(source) }
     val resolve: (String) -> String = remember(baseDir) { { url -> Markdown.resolve(url, baseDir) } }
     SelectionContainer {
@@ -74,7 +74,7 @@ fun MarkdownText(source: String, modifier: Modifier = Modifier, baseDir: String?
             for (block in blocks) {
                 // A block that is only a picture has no text to show.
                 val textless = block is Block.Paragraph && block.inlines.all { it is Inline.Image || (it is Inline.Text && it.text.isBlank()) }
-                if (!textless) MarkdownBlock(block, resolve)
+                if (!textless) MarkdownBlock(block, resolve, tone)
                 // Its pictures and videos, shown as themselves, right under it.
                 for (image in Markdown.imagesIn(block)) {
                     me.jagajaga.persist.ui.viewer.MediaPreview(resolve(image.url), maxHeight = 360.dp, hideOnFailure = false)
@@ -85,19 +85,21 @@ fun MarkdownText(source: String, modifier: Modifier = Modifier, baseDir: String?
 }
 
 @Composable
-private fun MarkdownBlock(block: Block, resolve: (String) -> String) {
+private fun MarkdownBlock(block: Block, resolve: (String) -> String, tone: androidx.compose.ui.graphics.Color? = null) {
+    // Body text in the given tone (thinking is quieter than an answer).
+    val body = tone?.let { Type.body.copy(color = it) } ?: Type.body
     when (block) {
         is Block.Heading -> Text(
             annotate(block.inlines, resolve),
-            style = Type.body.copy(
+            style = body.copy(
                 fontWeight = FontWeight.SemiBold,
                 fontSize = when (block.level) { 1 -> 20.sp; 2 -> 18.sp; else -> 16.sp },
             ),
         )
-        is Block.Paragraph -> Text(annotate(block.inlines, resolve), style = Type.body)
+        is Block.Paragraph -> Text(annotate(block.inlines, resolve), style = body)
         is Block.ListItem -> Row(Modifier.padding(start = (block.depth * 16).dp)) {
-            Text(if (block.ordered) "${block.number}." else "•", style = Type.body, modifier = Modifier.width(22.dp))
-            Text(annotate(block.inlines, resolve), style = Type.body)
+            Text(if (block.ordered) "${block.number}." else "•", style = body, modifier = Modifier.width(22.dp))
+            Text(annotate(block.inlines, resolve), style = body)
         }
         is Block.Quote -> Row(
             Modifier
