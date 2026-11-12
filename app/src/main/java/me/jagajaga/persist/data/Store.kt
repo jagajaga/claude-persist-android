@@ -254,6 +254,13 @@ class Store(
         reply.events.mapNotNull { clientIdOf(it) }.forEach { confirmSent(it) }
     }
 
+    /** A new chat carrying on from this one: same folder and settings, its history shown; the original is untouched. */
+    suspend fun fork(sessionId: String): SessionInfo {
+        val info = json.decodeFromJsonElement(SessionInfo.serializer(), gw.request("forkSession", mapOf("sessionId" to JsonPrimitive(sessionId)))!!)
+        _sessions.value = listOf(info) + _sessions.value.filter { it.id != info.id }
+        return info
+    }
+
     suspend fun createSession(cwd: String, title: String?): SessionInfo {
         val params = buildMap<String, JsonElement> {
             put("cwd", JsonPrimitive(cwd))

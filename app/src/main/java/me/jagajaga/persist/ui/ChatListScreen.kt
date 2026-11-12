@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -52,6 +53,8 @@ fun ChatListScreen(
     usage: String? = null,
     onRename: (SessionInfo, String) -> Unit = { _, _ -> },
     onDelete: (SessionInfo) -> Unit = {},
+    onNewHere: (SessionInfo) -> Unit = {},
+    onFork: (SessionInfo) -> Unit = {},
 ) {
     var menuFor by remember { mutableStateOf<SessionInfo?>(null) }
     var renaming by remember { mutableStateOf<SessionInfo?>(null) }
@@ -84,7 +87,7 @@ fun ChatListScreen(
             }
             if (grouping == ChatGrouping.Recent) {
                 items(recent, key = { it.id }) { session ->
-                    ChatRow(session, showFolder = true, unread = unread(session), onLongPress = { menuFor = session }) { onOpen(session) }
+                    ChatRow(session, showFolder = true, unread = unread(session), onMenu = { menuFor = session }) { onOpen(session) }
                     HorizontalDivider(color = Palette.border, modifier = Modifier.padding(start = 16.dp))
                 }
             } else for ((folder, list) in groups) {
@@ -99,20 +102,12 @@ fun ChatListScreen(
                     )
                 }
                 items(list, key = { it.id }) { session ->
-                    ChatRow(session, showFolder = false, unread = unread(session), onLongPress = { menuFor = session }) { onOpen(session) }
+                    ChatRow(session, showFolder = false, unread = unread(session), onMenu = { menuFor = session }) { onOpen(session) }
                     HorizontalDivider(color = Palette.border, modifier = Modifier.padding(start = 16.dp))
                 }
             }
         }
-        menuFor?.let { target ->
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { menuFor = null },
-                title = { Text(target.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                text = { Text(target.cwd, style = Type.small) },
-                confirmButton = { androidx.compose.material3.TextButton(onClick = { renaming = target; menuFor = null }) { Text("Rename") } },
-                dismissButton = { androidx.compose.material3.TextButton(onClick = { deleting = target; menuFor = null }) { Text("Delete", color = Palette.error) } },
-            )
-        }
+        menuFor?.let { target -> ChatMenu(target, onDismiss = { menuFor = null }, onNewHere = { onNewHere(target) }, onFork = { onFork(target) }, onRename = { renaming = target }, onDelete = { deleting = target }) }
         renaming?.let { target ->
             var title by remember(target.id) { mutableStateOf(target.title) }
             androidx.compose.material3.AlertDialog(
@@ -158,13 +153,13 @@ private fun Toggle(text: String, on: Boolean, onClick: () -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatRow(session: SessionInfo, showFolder: Boolean, unread: Boolean, onLongPress: () -> Unit, onClick: () -> Unit) {
+private fun ChatRow(session: SessionInfo, showFolder: Boolean, unread: Boolean, onMenu: () -> Unit, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .background(Palette.surface)
-            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .combinedClickable(onClick = onClick, onLongClick = onMenu)
+            .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         StatusDot(working = session.working, error = session.status == "error")
@@ -186,5 +181,45 @@ private fun ChatRow(session: SessionInfo, showFolder: Boolean, unread: Boolean, 
             Text(ago(session.lastActivityAt), style = Type.tiny)
             if (unread) Text("●", style = Type.small.copy(color = Palette.error))
         }
+        // The chat's menu, in plain sight: long-press opens it too, but nobody finds that.
+        androidx.compose.material3.IconButton(onClick = onMenu) {
+            Icon(Icons.Filled.MoreVert, contentDescription = "Chat menu", tint = Palette.muted)
+        }
+    }
+}
+
+/** What can be done with a chat: another in its folder, a fork of it, rename, delete. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatMenu(
+    session: SessionInfo,
+    onDismiss: () -> Unit,
+    onNewHere: () -> Unit,
+    onFork: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Palette.surface) {
+        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+            Text(session.title, style = Type.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 20.dp))
+            Text(session.cwd, style = Type.tiny, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 10.dp))
+            MenuItem("New chat in this folder", "Starts fresh in ${session.cwd.trimEnd('/').substringAfterLast('/').ifEmpty { "/" }}") { onDismiss(); onNewHere() }
+            MenuItem("Fork", "A new chat that carries on from here; this one stays as it is") { onDismiss(); onFork() }
+            MenuItem("Rename", null) { onDismiss(); onRename() }
+            MenuItem("Delete", null, danger = true) { onDismiss(); onDelete() }
+        }
+    }
+}
+
+@Composable
+private fun MenuItem(title: String, detail: String?, danger: Boolean = false, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+    ) {
+        Text(title, style = Type.body.copy(color = if (danger) Palette.error else Palette.text))
+        detail?.let { Text(it, style = Type.tiny, maxLines = 2, overflow = TextOverflow.Ellipsis) }
     }
 }

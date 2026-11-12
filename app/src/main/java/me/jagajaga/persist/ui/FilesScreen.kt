@@ -59,7 +59,7 @@ import me.jagajaga.persist.data.Store
  * that pages through it, so a large log loads a piece at a time on a bad link.
  */
 @Composable
-fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)? = null) {
+fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)? = null, startChatIn: ((String) -> Unit)? = null) {
     var path by remember { mutableStateOf(startPath) }
     var listing by remember { mutableStateOf<FsListing?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -122,14 +122,22 @@ fun FilesScreen(store: Store, startPath: String, pickFolder: ((String) -> Unit)?
                     }
                 },
                 confirmButton = {
-                    androidx.compose.material3.TextButton(enabled = name.isNotBlank() && !name.contains('/'), onClick = {
+                    val ok = name.isNotBlank() && !name.contains('/')
+                    fun create(then: (String) -> Unit) {
                         val target = path.trimEnd('/') + "/" + name.trim()
                         scope.launch {
                             runCatching { store.mkdir(target) }
-                                .onSuccess { naming = false; reload++ }
+                                .onSuccess { naming = false; reload++; then(target) }
                                 .onFailure { problem = it.message }
                         }
-                    }) { Text("Create") }
+                    }
+                    Row {
+                        androidx.compose.material3.TextButton(enabled = ok, onClick = { create {} }) { Text("Create") }
+                        // Starting a chat: make its folder and go straight into it.
+                        startChatIn?.let { start ->
+                            androidx.compose.material3.TextButton(enabled = ok, onClick = { create(start) }) { Text("Create and start chat") }
+                        }
+                    }
                 },
                 dismissButton = { androidx.compose.material3.TextButton(onClick = { naming = false }) { Text("Cancel") } },
             )

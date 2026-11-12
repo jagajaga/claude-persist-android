@@ -225,6 +225,7 @@ private enum class Tab(val label: String) { Chats("Chats"), Feed("Feed"), Files(
 
 @Composable
 private fun MainTabs(c: Container, nav: NavHostController, banner: @Composable () -> Unit) {
+    val context = LocalContext.current
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val sessions by c.store.sessions.collectAsState()
     val feed by c.store.feed.collectAsState()
@@ -280,6 +281,20 @@ private fun MainTabs(c: Container, nav: NavHostController, banner: @Composable (
                         usage = usage?.let { u -> me.jagajaga.persist.ui.chat.Options.usageLine(u.windows) },
                         onRename = { s, title -> scope.launch { runCatching { c.store.rename(s.id, title) } } },
                         onDelete = { s -> scope.launch { runCatching { c.store.delete(s.id) } } },
+                        onNewHere = { s ->
+                            scope.launch {
+                                runCatching { c.store.createSession(s.cwd, s.cwd.trimEnd('/').substringAfterLast('/') + "-") }
+                                    .onSuccess { info -> nav.navigate("chat/${info.id}") }
+                                    .onFailure { toast(context, "Couldn't start a chat: ${it.message}") }
+                            }
+                        },
+                        onFork = { s ->
+                            scope.launch {
+                                runCatching { c.store.fork(s.id) }
+                                    .onSuccess { info -> nav.navigate("chat/${info.id}") }
+                                    .onFailure { toast(context, "Couldn't fork: ${it.message}") }
+                            }
+                        },
                     )
                 }
                 Tab.Feed -> FeedScreen(c.store, feed) { id -> nav.navigate("chat/$id") }
@@ -316,7 +331,19 @@ private fun NewChat(c: Container, nav: NavHostController) {
         }
         if (chosen == null) {
             // Named after its folder to start with, as the panel does: "blooper2.0-".
-            FilesScreen(c.store, startPath = homeGuess(c), pickFolder = { folder = it; if (title.isBlank()) title = it.trimEnd('/').substringAfterLast('/') + "-" })
+            FilesScreen(
+                c.store,
+                startPath = homeGuess(c),
+                pickFolder = { folder = it; if (title.isBlank()) title = it.trimEnd('/').substringAfterLast('/') + "-" },
+                // A folder made for this chat: no second step, the chat starts in it at once.
+                startChatIn = { made ->
+                    scope.launch {
+                        runCatching { c.store.createSession(made, made.trimEnd('/').substringAfterLast('/') + "-") }
+                            .onSuccess { info -> nav.popBackStack(); nav.navigate("chat/${info.id}") }
+                            .onFailure { folder = made; error = it.message }
+                    }
+                },
+            )
         } else {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("In $chosen", style = Type.small)
@@ -583,3 +610,6 @@ private fun MoveChat(c: Container, sessionId: String, nav: NavHostController) {
         )
     }
 }
+
+private fun toast(context: android.content.Context, text: String) =
+    android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_LONG).show()
