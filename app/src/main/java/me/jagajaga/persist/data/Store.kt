@@ -577,6 +577,26 @@ class Store(
         refreshSessions()
     }
 
+    /** Super bypass on (bypass with it) or off (bypass stays). */
+    suspend fun setAutoApprove(sessionId: String, on: Boolean) {
+        gw.request("setAutoApprove", mapOf("sessionId" to JsonPrimitive(sessionId), "on" to JsonPrimitive(on)))
+        refreshSessions()
+    }
+
+    /**
+     * The shield's three states, in the order a tap moves through them:
+     * ask -> bypass -> super bypass -> ask.
+     */
+    suspend fun nextPermissionLevel(session: SessionInfo): PermissionLevel {
+        val next = PermissionLevel.of(session).next()
+        when (next) {
+            PermissionLevel.Ask -> setPermissionMode(session.id, "default")
+            PermissionLevel.Bypass -> setPermissionMode(session.id, "bypassPermissions")
+            PermissionLevel.SuperBypass -> setAutoApprove(session.id, true)
+        }
+        return next
+    }
+
     suspend fun setAccount(configDir: String?) {
         val result = gw.request("setAccount", mapOf("configDir" to (configDir?.let { JsonPrimitive(it) } ?: JsonNull)))
         result?.let { _accounts.value = json.decodeFromJsonElement(ListSerializer(AccountInfo.serializer()), it) }

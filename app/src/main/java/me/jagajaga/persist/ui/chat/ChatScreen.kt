@@ -47,6 +47,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
@@ -131,6 +132,7 @@ fun ChatFrame(
     val session = sessions.firstOrNull { it.id == sessionId }
     val events by store.events(sessionId).collectAsState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     Column(
         Modifier
@@ -164,8 +166,12 @@ fun ChatFrame(
             onCompact = { compactAsk = true },
             onOptions = { optionsOpen = true },
             onToggleBypass = {
-                val bypass = session?.permissionMode == "bypassPermissions"
-                scope.launch { runCatching { store.setPermissionMode(sessionId, if (bypass) "default" else "bypassPermissions") } }
+                session?.let { s ->
+                    scope.launch {
+                        runCatching { store.nextPermissionLevel(s) }
+                            .onSuccess { level -> android.widget.Toast.makeText(context, "${level.label}: ${level.explain}", android.widget.Toast.LENGTH_SHORT).show() }
+                    }
+                }
             },
         ) { text, images, files -> store.send(sessionId, text, images, files) } }
         if (optionsOpen && session != null) OptionsSheet(store, session) { optionsOpen = false }
@@ -1111,20 +1117,26 @@ private fun Composer(
             // Everything after this sits at the right edge, as in the panel.
             Spacer(Modifier.weight(1f))
             if (agents.isNotEmpty()) AgentsChip(agents, onStopAgent)
-            // Bypass permissions: the panel's shield, as an icon only, filled when on.
-            val bypass = session?.permissionMode == "bypassPermissions"
+            // Permissions: the panel's shield, as an icon only. A tap moves
+            // ask -> bypass (orange) -> super bypass (red, with a bolt) -> ask.
+            val level = session?.let { me.jagajaga.persist.data.PermissionLevel.of(it) } ?: me.jagajaga.persist.data.PermissionLevel.Ask
+            val fill = when (level) {
+                me.jagajaga.persist.data.PermissionLevel.Ask -> Palette.surface
+                me.jagajaga.persist.data.PermissionLevel.Bypass -> Palette.warn
+                me.jagajaga.persist.data.PermissionLevel.SuperBypass -> Palette.error
+            }
             Box(
                 Modifier
                     .size(40.dp)
-                    .background(if (bypass) Palette.warn else Palette.surface, CircleShape)
-                    .border(1.dp, if (bypass) Palette.warn else Palette.border, CircleShape)
+                    .background(fill, CircleShape)
+                    .border(1.dp, if (level == me.jagajaga.persist.data.PermissionLevel.Ask) Palette.border else fill, CircleShape)
                     .clickable(enabled = session != null, onClick = onToggleBypass),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.Filled.Shield,
-                    contentDescription = if (bypass) "Bypass permissions: on" else "Bypass permissions: off",
-                    tint = if (bypass) Color.White else Palette.muted,
+                    if (level == me.jagajaga.persist.data.PermissionLevel.SuperBypass) Icons.Filled.Bolt else Icons.Filled.Shield,
+                    contentDescription = "Permissions: ${level.label}",
+                    tint = if (level == me.jagajaga.persist.data.PermissionLevel.Ask) Palette.muted else Color.White,
                     modifier = Modifier.size(20.dp),
                 )
             }

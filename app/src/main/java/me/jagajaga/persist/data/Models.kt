@@ -11,6 +11,8 @@ data class SessionInfo(
     val cwd: String,
     val status: String = "idle",
     val permissionMode: String = "default",
+    /** Super bypass: what the chat still asks for in bypass mode is allowed by the server. */
+    val autoApprove: Boolean = false,
     val model: String? = null,
     val activeModel: String? = null,
     val effort: String? = null,
@@ -249,3 +251,21 @@ data class ClaudeSessionCandidate(
 data class Span(val text: String, val color: String?, val style: Int)
 
 data class Highlighted(val language: String, val fg: String, val bg: String, val lines: List<List<Span>>, val truncated: Boolean)
+
+/** How freely a chat runs tools: asks, bypasses, or bypasses and allows even what it still asks. */
+enum class PermissionLevel(val label: String, val explain: String) {
+    Ask("Ask before running tools", "Each tool call waits for you"),
+    Bypass("Bypass permissions", "Tools run without asking; a few risky commands still ask"),
+    SuperBypass("Super bypass", "Everything is allowed, even what still asks; questions still come to you");
+
+    fun next(): PermissionLevel = entries[(ordinal + 1) % entries.size]
+
+    companion object {
+        fun of(session: SessionInfo): PermissionLevel = when {
+            session.permissionMode != "bypassPermissions" -> Ask
+            session.autoApprove -> SuperBypass
+            else -> Bypass
+        }
+    }
+}
+

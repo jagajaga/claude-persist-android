@@ -85,11 +85,19 @@ fun OptionsSheet(store: Store, session: SessionInfo, onDismiss: () -> Unit) {
             }
 
             Section("Permissions")
-            Choice("Ask before running tools", selected = session.permissionMode != "bypassPermissions") {
-                act { store.setPermissionMode(session.id, "default") }
-            }
-            Choice("Bypass permissions", selected = session.permissionMode == "bypassPermissions") {
-                act { store.setPermissionMode(session.id, "bypassPermissions") }
+            val level = me.jagajaga.persist.data.PermissionLevel.of(session)
+            for (choice in me.jagajaga.persist.data.PermissionLevel.entries) {
+                Choice(choice.label, selected = level == choice, note = choice.explain) {
+                    act {
+                        when (choice) {
+                            me.jagajaga.persist.data.PermissionLevel.Ask -> store.setPermissionMode(session.id, "default")
+                            me.jagajaga.persist.data.PermissionLevel.Bypass ->
+                                if (level == me.jagajaga.persist.data.PermissionLevel.SuperBypass) store.setAutoApprove(session.id, false)
+                                else store.setPermissionMode(session.id, "bypassPermissions")
+                            me.jagajaga.persist.data.PermissionLevel.SuperBypass -> store.setAutoApprove(session.id, true)
+                        }
+                    }
+                }
             }
 
             Section("Account")
