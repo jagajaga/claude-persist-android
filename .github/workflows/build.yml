@@ -77,7 +77,9 @@ jobs:
           "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" | head -3
           cp "$APK" "claude-persist-$VERSION_NAME.apk"
 
+      # A pull request builds unsigned and keeps no APK.
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: claude-persist-apk
           path: claude-persist-*.apk
