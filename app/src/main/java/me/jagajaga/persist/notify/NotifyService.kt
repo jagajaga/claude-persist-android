@@ -53,7 +53,7 @@ class NotifyService : Service() {
         running = true
         val c = container
         c.store.wantFeed(true)
-        c.gateway.start()
+        c.startGateway()
         scope.launch {
             c.store.incoming.collect { (sessionId, event) -> Notifications.maybePost(this@NotifyService, sessionId, event) }
         }

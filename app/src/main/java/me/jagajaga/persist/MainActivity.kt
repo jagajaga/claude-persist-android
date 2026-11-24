@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) c.pendingOpen.value = intent?.getStringExtra(me.jagajaga.persist.notify.Notifications.EXTRA_CHAT)
         me.jagajaga.persist.notify.Notifications.follow(this)
         me.jagajaga.persist.notify.Push.fetchToken(applicationContext) { c.pushToken(it) }
-        setContent { PersistTheme { App(c) } }
+        setContent { PersistTheme { Root(c) } }
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -120,6 +120,20 @@ class MainActivity : ComponentActivity() {
         // Back from the background: the socket may well have died while we were
         // away, and there is no reason to wait out a backoff to find out.
         container.gateway.reconnectNow()
+    }
+}
+
+/** No server yet (a fresh install, or an update from a version with one built in): ask for it first. */
+@Composable
+private fun Root(c: Container) {
+    var hasServer by remember { mutableStateOf(c.settings.hasServer) }
+    if (hasServer) {
+        App(c)
+    } else {
+        me.jagajaga.persist.ui.ServerSetupScreen(c) {
+            hasServer = true
+            c.onForeground()
+        }
     }
 }
 
@@ -369,25 +383,15 @@ private fun NewChat(c: Container, nav: NavHostController) {
 
 @Composable
 private fun SettingsScreen(c: Container, nav: NavHostController) {
-    var base by remember { mutableStateOf(c.settings.baseUrl) }
-    var port by remember { mutableStateOf(c.settings.gatewayPort.toString()) }
     Column(Modifier.fillMaxSize().background(Palette.page).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
             Text("Settings", style = Type.title.copy(fontWeight = FontWeight.SemiBold))
         }
-        OutlinedTextField(value = base, onValueChange = { base = it }, label = { Text("code-server address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = port, onValueChange = { port = it.filter(Char::isDigit) }, label = { Text("Gateway port") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Text("Connects to ${base.trimEnd('/').replaceFirst(Regex("^http"), "ws")}/proxy/$port/ws", style = Type.tiny)
-        Button(
-            onClick = {
-                c.settings.baseUrl = base
-                port.toIntOrNull()?.let { c.settings.gatewayPort = it }
-                c.gateway.reconnectNow()
-                nav.popBackStack()
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = Palette.accent),
-        ) { Text("Save") }
+        me.jagajaga.persist.ui.ServerForm(c, buttonLabel = "Save") {
+            c.gateway.reconnectNow()
+            nav.popBackStack()
+        }
         OutlinedButton(onClick = { nav.navigate("login") }) { Text("Log in again") }
         NotifySection(c)
         UpdateSection(c)
@@ -400,9 +404,9 @@ private fun SettingsScreen(c: Container, nav: NavHostController) {
 }
 
 /**
- * "Check for updates": the server fetches the newest release (the repo is
- * private, the server can read it), the phone downloads it through the
- * gateway -- resuming if the link drops -- and Android's installer takes over.
+ * "Check for updates": the server fetches the newest GitHub release (with
+ * its own `gh`), the phone downloads it through the gateway -- resuming if
+ * the link drops -- and Android's installer takes over.
  */
 @Composable
 private fun UpdateSection(c: Container) {
