@@ -131,7 +131,7 @@ private fun Frame(path: String, onClose: () -> Unit, dark: Boolean = false, titl
                 val web = path.startsWith("http://") || path.startsWith("https://")
                 val url = if (web) path else c.settings.fileUrl(path)
                 val name = path.substringBefore('?').substringAfterLast('/')
-                runCatching { me.jagajaga.persist.net.SystemDownload.start(context, url, if (web && !path.startsWith(c.settings.baseUrl)) null else c.downloads.cookieHeader(), name) }
+                runCatching { me.jagajaga.persist.net.SystemDownload.start(context, url, if (web && !c.settings.isOurs(path)) null else c.downloads.cookieHeader(), name) }
                     .onSuccess { android.widget.Toast.makeText(context, "Downloading $name", android.widget.Toast.LENGTH_SHORT).show() }
             }) { Icon(androidx.compose.material.icons.Icons.Filled.Download, contentDescription = "Download", tint = fg) }
         }
@@ -153,7 +153,7 @@ private fun BoxScope.Fetched(c: Container, path: String, show: @Composable BoxSc
         val url = if (web) path else c.settings.fileUrl(path)
         val target = File(context.cacheDir, "viewer/${path.hashCode().toUInt()}-${path.substringBefore('?').substringAfterLast('/')}")
         // Our own server gets the login; another site never sees it.
-        runCatching { c.downloads.download(url, target, withLogin = !web || path.startsWith(c.settings.baseUrl)) { done, total -> progress = done to total } }
+        runCatching { c.downloads.download(url, target, withLogin = !web || c.settings.isOurs(path)) { done, total -> progress = done to total } }
             .onSuccess { file = it }
             .onFailure { error = it.message ?: "Couldn't open it" }
     }
@@ -229,7 +229,7 @@ private fun BoxScope.MediaPlayer(c: Container, path: String, active: Boolean) {
     var error by remember(path) { mutableStateOf<String?>(null) }
     val web = path.startsWith("http://") || path.startsWith("https://")
     val url = if (web) path else c.settings.fileUrl(path)
-    val headers = if (!web || path.startsWith(c.settings.baseUrl)) mapOf("Cookie" to c.downloads.cookieHeader()) else emptyMap()
+    val headers = if (!web || c.settings.isOurs(path)) mapOf("Cookie" to c.downloads.cookieHeader()) else emptyMap()
     var view by remember { mutableStateOf<VideoView?>(null) }
     var ready by remember(path) { mutableStateOf(false) }
     var playing by remember(path) { mutableStateOf(false) }

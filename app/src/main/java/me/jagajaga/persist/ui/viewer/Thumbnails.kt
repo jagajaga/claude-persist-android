@@ -69,7 +69,7 @@ fun MediaPreview(target: String, maxHeight: Dp = 240.dp, hideOnFailure: Boolean 
     val web = target.startsWith("http://") || target.startsWith("https://")
     val video = Links.kind(target.substringBefore('?')) == FileKind.Video
     // Our own server gets the login; any other site never sees it.
-    val ours = !web || target.startsWith(c.settings.baseUrl)
+    val ours = !web || c.settings.isOurs(target)
     val url = if (web) target else c.settings.fileUrl(target)
     var bitmap by remember(target) { mutableStateOf(Thumbs.cache.get(target)) }
     var failed by remember(target) { mutableStateOf(false) }

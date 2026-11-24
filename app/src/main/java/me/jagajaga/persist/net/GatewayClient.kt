@@ -175,7 +175,14 @@ class GatewayClient(
         fun finish(ended: Ended) {
             if (finished.compareAndSet(false, true) && cont.isActive) cont.resume(ended)
         }
-        val builder = Request.Builder().url(wsUrl())
+        // An address OkHttp can't use (none set yet, or a bad one saved long
+        // ago) is a closed connection, retried later, not a crash of the app.
+        val builder = try {
+            Request.Builder().url(wsUrl())
+        } catch (e: IllegalArgumentException) {
+            finish(Ended.Closed("no usable server address"))
+            return@suspendCancellableCoroutine
+        }
         cookie()?.takeIf { it.isNotBlank() }?.let { builder.header("Cookie", it) }
         val ws = client.newWebSocket(builder.build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {

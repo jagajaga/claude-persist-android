@@ -16,13 +16,25 @@ import me.jagajaga.persist.data.Store
 import me.jagajaga.persist.net.GatewayClient
 import java.io.File
 
-/** Where the server is. Editable in the app; these are this server's values. */
+/** Where the server is, as the user entered it, and the app's other choices. */
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    var baseUrl: String
-        get() = prefs.getString("baseUrl", DEFAULT_BASE_URL)!!.trimEnd('/')
-        set(value) = prefs.edit().putString("baseUrl", value.trim().trimEnd('/')).apply()
+    /**
+     * The code-server address the user entered, or null until they have:
+     * there is no built-in server, and the app asks for one first.
+     */
+    var server: String?
+        get() = me.jagajaga.persist.net.ServerAddress.stored(prefs.getString("baseUrl", null))
+        set(value) = prefs.edit().putString("baseUrl", value?.trim()?.trimEnd('/')).apply()
+
+    val hasServer: Boolean get() = server != null
+
+    /** The server's address; empty only before one is set, when nothing connects. */
+    val baseUrl: String get() = server.orEmpty()
+
+    /** A link on this server, which may carry its login. */
+    fun isOurs(url: String): Boolean = me.jagajaga.persist.net.ServerAddress.isUnder(url, server)
 
     var gatewayPort: Int
         get() = prefs.getInt("gatewayPort", DEFAULT_PORT)
@@ -62,7 +74,6 @@ class Settings(context: Context) {
     fun fileUrl(path: String): String = "$httpBase/file?path=" + java.net.URLEncoder.encode(path, "UTF-8")
 
     companion object {
-        const val DEFAULT_BASE_URL = "https://code.example.com"
         const val DEFAULT_PORT = 7790
     }
 }
@@ -112,8 +123,13 @@ class Container(context: Context) {
     fun onForeground() {
         onScreen = true
         pauseJob?.cancel()
-        gateway.start()
+        startGateway()
         gateway.reconnectNow()
+    }
+
+    /** Connect, once there is a server to connect to. */
+    fun startGateway() {
+        if (settings.hasServer) gateway.start()
     }
 
     /**

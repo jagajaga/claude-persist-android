@@ -281,4 +281,20 @@ class GatewayClientTest {
         withTimeout(10_000) { gw.state.first { it is ConnectionState.Offline } }
         gw.stop()
     }
+
+    /** No server set yet (wsUrl is "/proxy/7790/ws"), or a bad one saved long ago: offline, and the app keeps running. */
+    @Test
+    fun `an unusable address is a closed connection, not a crash`() = runBlocking {
+        val crashes = LinkedBlockingQueue<Throwable>()
+        val guarded = CoroutineScope(SupervisorJob() + Dispatchers.IO + kotlinx.coroutines.CoroutineExceptionHandler { _, e -> crashes.add(e) })
+        for (bad in listOf("/proxy/7790/ws", "wss://exa mple.com/proxy/7790/ws")) {
+            val gw = GatewayClient(scope = guarded, wsUrl = { bad }, cookie = { null }, backoff = Backoff(baseMs = 50, maxMs = 200))
+            gw.start()
+            val offline = withTimeout(10_000) { gw.state.first { it is ConnectionState.Offline } } as ConnectionState.Offline
+            assertEquals("no usable server address", offline.reason)
+            gw.stop()
+        }
+        guarded.cancel()
+        assertEquals(emptyList<Throwable>(), crashes.toList())
+    }
 }

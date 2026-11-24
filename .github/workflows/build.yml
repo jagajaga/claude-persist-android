@@ -16,6 +16,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The repository was recreated (public, history rewritten), so its run
+      # numbers began again at 1. Installed phones have up to 0.1.53 (code 53):
+      # every build counts on from 100 so it still installs over them.
+      - name: Version
+        run: |
+          n=$(( ${{ github.run_number }} + 100 ))
+          echo "VERSION_CODE=$n" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=0.1.$n" >> "$GITHUB_ENV"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -59,8 +68,6 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           # Firebase, for notifications through Google; kept out of the repository.
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-          VERSION_CODE: ${{ github.run_number }}
-          VERSION_NAME: 0.1.${{ github.run_number }}
         run: gradle --no-daemon assembleRelease
 
       - name: Verify the APK is signed
@@ -68,7 +75,7 @@ jobs:
         run: |
           APK=app/build/outputs/apk/release/app-release.apk
           "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" | head -3
-          cp "$APK" "claude-persist-0.1.${{ github.run_number }}.apk"
+          cp "$APK" "claude-persist-$VERSION_NAME.apk"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -81,7 +88,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v0.1.${{ github.run_number }}" claude-persist-*.apk \
-            --title "0.1.${{ github.run_number }}" \
+          gh release create "v$VERSION_NAME" claude-persist-*.apk \
+            --title "$VERSION_NAME" \
             --notes "Built from ${GITHUB_SHA::7}. Install over the previous version; same signing key." \
             --latest
