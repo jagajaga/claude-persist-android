@@ -66,6 +66,35 @@ object Options {
         WINDOW_ORDER.mapNotNull { kind -> windows[kind]?.utilization?.let { (WINDOW_LABELS[kind] ?: kind) to it } }
             .maxByOrNull { it.second }
 
+    /** One window of an account's limits, as Settings lists it. */
+    data class LimitLine(val label: String, val percent: Int, val resets: String?, val full: Boolean)
+
+    /**
+     * Every window of an account's last reading: "7d", 100, "resets Thu 28 Nov, 19:59".
+     * A reset already past is dropped, since that window has started over.
+     */
+    fun limitLines(account: AccountInfo, now: Long, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): List<LimitLine> {
+        val reading = account.lastUsage ?: return emptyList()
+        return WINDOW_ORDER.mapNotNull { kind ->
+            val w = reading.windows[kind] ?: return@mapNotNull null
+            val u = w.utilization ?: return@mapNotNull null
+            val at = w.resetsAt?.takeIf { it > now }
+            LimitLine(WINDOW_LABELS[kind] ?: kind, u.roundToInt(), at?.let { "resets " + resetTime(it, now, zone) }, u >= 100)
+        }
+    }
+
+    /** "today 22:59", "tomorrow 11:59", "Thu 28 Nov, 19:59", in the phone's own time zone. */
+    fun resetTime(at: Long, now: Long, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String {
+        val t = java.time.Instant.ofEpochMilli(at).atZone(zone)
+        val today = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val clock = t.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+        return when (t.toLocalDate()) {
+            today -> "today $clock"
+            today.plusDays(1) -> "tomorrow $clock"
+            else -> t.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", java.util.Locale.ENGLISH))
+        }
+    }
+
     /** "5h 42% · 7d 21%": every window with a reading, as the panel's status bar tooltip lists them. */
     fun usageLine(windows: Map<String, me.jagajaga.persist.data.RateWindow>): String? =
         WINDOW_ORDER.mapNotNull { kind -> windows[kind]?.utilization?.let { "${WINDOW_LABELS[kind]} ${it.roundToInt()}%" } }

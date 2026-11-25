@@ -432,6 +432,13 @@ private fun AccountsSection(c: Container) {
                 Column(Modifier.weight(1f)) {
                     Text(a.name + if (a.active) "  · in use" else "", style = Type.body)
                     a.email?.let { Text(it, style = Type.small.copy(color = Palette.muted), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+                    // Its limits: each window's use and when it resets; a used-up one in red.
+                    for (line in me.jagajaga.persist.ui.chat.Options.limitLines(a, System.currentTimeMillis())) {
+                        Text(
+                            "${line.label} ${line.percent}%" + (line.resets?.let { " · $it" } ?: ""),
+                            style = Type.tiny.copy(color = if (line.full) Palette.error else Palette.muted),
+                        )
+                    }
                     Text(
                         when {
                             !a.signedIn -> "Not signed in"

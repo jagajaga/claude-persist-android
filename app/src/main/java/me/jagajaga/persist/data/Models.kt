@@ -186,6 +186,8 @@ data class RateWindow(
     /** Percent, 0..100. */
     val utilization: Double? = null,
     val status: String? = null,
+    /** When this window resets (epoch ms), when the server knows it. */
+    val resetsAt: Long? = null,
 )
 
 @Serializable

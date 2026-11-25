@@ -71,4 +71,32 @@ class OptionsTest {
         assertEquals("7d" to 77.0, Options.nearest(windows))
         assertNull(Options.nearest(emptyMap()))
     }
+
+    @Test
+    fun `each window shows its use and when it resets, a past reset dropped`() {
+        val utc = java.time.ZoneId.of("UTC")
+        val now = java.time.Instant.parse("2026-11-25T17:30:00Z").toEpochMilli()
+        val acct = AccountInfo(
+            "serokell",
+            lastUsage = me.jagajaga.persist.data.AccountUsage(
+                mapOf(
+                    "five_hour" to me.jagajaga.persist.data.RateWindow(100.0, resetsAt = java.time.Instant.parse("2026-11-25T21:59:00Z").toEpochMilli()),
+                    "seven_day" to me.jagajaga.persist.data.RateWindow(33.4, resetsAt = java.time.Instant.parse("2026-11-26T10:59:00Z").toEpochMilli()),
+                    "seven_day_opus" to me.jagajaga.persist.data.RateWindow(80.0, resetsAt = java.time.Instant.parse("2026-11-28T19:00:00Z").toEpochMilli()),
+                    "seven_day_sonnet" to me.jagajaga.persist.data.RateWindow(10.0, resetsAt = now - 1),
+                ),
+                at = now,
+            ),
+        )
+        val lines = Options.limitLines(acct, now, utc)
+        assertEquals(
+            listOf(
+                Options.LimitLine("5h", 100, "resets today 21:59", true),
+                Options.LimitLine("7d", 33, "resets tomorrow 10:59", false),
+                Options.LimitLine("7d opus", 80, "resets Sat 28 Nov, 19:00", false),
+                Options.LimitLine("7d sonnet", 10, null, false),
+            ),
+            lines,
+        )
+    }
 }
