@@ -200,6 +200,8 @@ data class AccountInfo(
     val lastUsage: AccountUsage? = null,
     val signedIn: Boolean = true,
     val loginExpired: Boolean = false,
+    /** The email this account is signed in as, when the server knows it. */
+    val email: String? = null,
 )
 
 @Serializable

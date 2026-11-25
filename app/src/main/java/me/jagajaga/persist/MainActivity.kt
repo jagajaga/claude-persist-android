@@ -431,6 +431,7 @@ private fun AccountsSection(c: Container) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(a.name + if (a.active) "  · in use" else "", style = Type.body)
+                    a.email?.let { Text(it, style = Type.small.copy(color = Palette.muted), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
                     Text(
                         when {
                             !a.signedIn -> "Not signed in"
