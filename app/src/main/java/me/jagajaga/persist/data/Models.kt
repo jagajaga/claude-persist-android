@@ -206,7 +206,7 @@ data class AccountInfo(
 data class LoginStarted(val loginId: String, val url: String)
 
 @Serializable
-data class LoginResult(val ok: Boolean, val error: String? = null, val configDir: String? = null)
+data class LoginResult(val ok: Boolean, val error: String? = null, val configDir: String? = null, val token: String? = null)
 
 /** The app's newest release, as the server sees it. */
 @Serializable

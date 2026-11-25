@@ -602,8 +602,12 @@ class Store(
         result?.let { _accounts.value = json.decodeFromJsonElement(ListSerializer(AccountInfo.serializer()), it) }
     }
 
-    suspend fun startLogin(name: String): LoginStarted =
-        json.decodeFromJsonElement(LoginStarted.serializer(), gw.request("startLogin", mapOf("name" to JsonPrimitive(name)))!!)
+    /** purpose "token": `claude setup-token` for that account, a long-lived token for a bot; the account in use stays. */
+    suspend fun startLogin(name: String, purpose: String = "login"): LoginStarted =
+        json.decodeFromJsonElement(
+            LoginStarted.serializer(),
+            gw.request("startLogin", mapOf("name" to JsonPrimitive(name), "purpose" to JsonPrimitive(purpose)))!!,
+        )
 
     suspend fun submitLoginCode(loginId: String, code: String): LoginResult {
         val result = json.decodeFromJsonElement(

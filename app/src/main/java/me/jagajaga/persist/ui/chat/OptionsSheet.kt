@@ -3,6 +3,7 @@ package me.jagajaga.persist.ui.chat
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -144,10 +145,17 @@ fun OptionsSheet(store: Store, session: SessionInfo, onDismiss: () -> Unit) {
 /**
  * Start a sign-in on the server, open its page here, paste the code back.
  * With [account] given (a login that failed, an expired account tapped), it
- * signs that one in again; otherwise it asks which.
+ * signs that one in again; otherwise it asks which. With [forToken], the same
+ * steps run `claude setup-token` for [account] instead and end by showing the
+ * long-lived token, to copy for a bot; nothing is signed in or switched.
  */
 @Composable
-internal fun SignInDialog(store: Store, onDone: () -> Unit, account: String? = null) {
+internal fun SignInDialog(store: Store, onDone: () -> Unit, account: String? = null, forToken: Boolean = false) {
+    var token by remember { mutableStateOf<String?>(null) }
+    token?.let { issued ->
+        TokenShown(account ?: "default", issued, onDone)
+        return
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
@@ -163,6 +171,7 @@ internal fun SignInDialog(store: Store, onDone: () -> Unit, account: String? = n
             Text(
                 when {
                     loginId != null -> "Paste the code"
+                    forToken -> "Token for ${account ?: "default"}"
                     account == null || account == "default" -> "Sign in to Claude"
                     else -> "Sign in to $account"
                 },
@@ -170,8 +179,10 @@ internal fun SignInDialog(store: Store, onDone: () -> Unit, account: String? = n
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (loginId == null && account != null) {
-                    Text("A page opens to sign in. Then paste the code it shows here.", style = Type.small)
+                if (loginId == null && forToken) {
+                    Text("Makes a long-lived (1 year) token for this account, for a bot or another program. A page opens to sign in; then paste the code it shows here. The account in use doesn't change.", style = Type.small)
+                } else if (loginId == null && account != null) {
+                    Text("A page opens to sign in. Then paste the code it shows here. Running chats keep going.", style = Type.small)
                 } else if (loginId == null) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { useDefault = true }) {
                         androidx.compose.material3.RadioButton(selected = useDefault, onClick = { useDefault = true })
@@ -212,19 +223,45 @@ internal fun SignInDialog(store: Store, onDone: () -> Unit, account: String? = n
                     runCatching {
                         val id = loginId
                         if (id == null) {
-                            val started = store.startLogin(account ?: if (useDefault) "default" else name.trim())
+                            val started = store.startLogin(account ?: if (useDefault) "default" else name.trim(), if (forToken) "token" else "login")
                             loginId = started.loginId
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(started.url)))
                         } else {
                             val result = store.submitLoginCode(id, code)
-                            if (result.ok) onDone() else message = result.error ?: "That didn't work"
+                            when {
+                                result.ok && result.token != null -> token = result.token
+                                result.ok -> onDone()
+                                else -> message = result.error ?: "That didn't work"
+                            }
                         }
                     }.onFailure { message = it.message }
                     busy = false
                 }
-            }) { Text(if (loginId == null) "Open sign-in page" else "Sign in") }
+            }) { Text(if (loginId == null) "Open sign-in page" else if (forToken) "Make token" else "Sign in") }
         },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
+    )
+}
+
+/** The token, shown once: selectable, with Copy. The server keeps no copy. */
+@Composable
+private fun TokenShown(account: String, token: String, onDone: () -> Unit) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("Token for $account") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Valid for a year. Shown only now; the server keeps no copy. Treat it like a password.", style = Type.small)
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(token, style = Type.code, modifier = Modifier.background(Palette.codeBg, RoundedCornerShape(8.dp)).padding(10.dp))
+                }
+                if (copied) Text("Copied", style = Type.small.copy(color = Palette.ok))
+            }
+        },
+        confirmButton = { TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(token)); copied = true }) { Text("Copy") } },
+        dismissButton = { TextButton(onClick = onDone) { Text("Done") } },
     )
 }
 

@@ -48,6 +48,8 @@ import me.jagajaga.persist.ui.viewer.UpdateCheck
 import me.jagajaga.persist.ui.viewer.ViewerScreen
 import me.jagajaga.persist.ui.viewer.openExternally
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -383,7 +385,10 @@ private fun NewChat(c: Container, nav: NavHostController) {
 
 @Composable
 private fun SettingsScreen(c: Container, nav: NavHostController) {
-    Column(Modifier.fillMaxSize().background(Palette.page).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(
+        Modifier.fillMaxSize().background(Palette.page).verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
             Text("Settings", style = Type.title.copy(fontWeight = FontWeight.SemiBold))
@@ -394,6 +399,7 @@ private fun SettingsScreen(c: Container, nav: NavHostController) {
         }
         OutlinedButton(onClick = { nav.navigate("login") }) { Text("Log in again") }
         NotifySection(c)
+        AccountsSection(c)
         UpdateSection(c)
         OutlinedButton(onClick = {
             CookieManager.getInstance().removeAllCookies(null)
@@ -401,6 +407,47 @@ private fun SettingsScreen(c: Container, nav: NavHostController) {
             c.gateway.reconnectNow()
         }) { Text("Log out") }
     }
+}
+
+/**
+ * Claude accounts on the server: sign an expired one in again, or make a
+ * long-lived token for a bot. Neither switches the account in use, so running
+ * chats are not interrupted.
+ */
+@Composable
+private fun AccountsSection(c: Container) {
+    val accounts by c.store.accounts.collectAsState()
+    LaunchedEffect(Unit) { c.store.refreshOptions() }
+    var signIn by remember { mutableStateOf<String?>(null) }
+    var token by remember { mutableStateOf<String?>(null) }
+    var refreshAfter by remember { mutableStateOf(false) }
+    LaunchedEffect(refreshAfter) { if (refreshAfter) { c.store.refreshOptions(); refreshAfter = false } }
+    fun nameOf(a: me.jagajaga.persist.data.AccountInfo) = if (a.configDir == null) "default" else a.name
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Claude accounts", style = Type.small.copy(fontWeight = FontWeight.SemiBold))
+        if (accounts.isEmpty()) Text("Loading…", style = Type.tiny)
+        for (a in accounts) {
+            val dead = !a.signedIn || a.loginExpired
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(a.name + if (a.active) "  · in use" else "", style = Type.body)
+                    Text(
+                        when {
+                            !a.signedIn -> "Not signed in"
+                            a.loginExpired -> "Login expired"
+                            else -> "Signed in"
+                        },
+                        style = Type.tiny.copy(color = if (dead) Palette.error else Palette.muted),
+                    )
+                }
+                if (dead) TextButton(onClick = { signIn = nameOf(a) }) { Text("Sign in again") }
+                TextButton(onClick = { token = nameOf(a) }) { Text("Token for a bot") }
+            }
+        }
+        Text("Signing in again or making a token leaves the account in use as it is, so running chats keep going.", style = Type.tiny)
+    }
+    signIn?.let { name -> me.jagajaga.persist.ui.chat.SignInDialog(c.store, onDone = { signIn = null; refreshAfter = true }, account = name) }
+    token?.let { name -> me.jagajaga.persist.ui.chat.SignInDialog(c.store, onDone = { token = null }, account = name, forToken = true) }
 }
 
 /**
